@@ -42,7 +42,8 @@ import {
   Send,
   Sparkles,
   TrendingUp,
-  History
+  History,
+  Volume
 } from 'lucide-react';
 import { AppMode, BabyStatus, LULLABIES, FileData, AnalysisResult } from './types.ts';
 import { GeminiService } from './services/gemini.ts';
@@ -79,7 +80,8 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
-  const [isMuted, setIsMuted] = useState(false); // Default to unmuted so parent can hear baby
+  // Default to muted to satisfy browser autoplay policies
+  const [isMuted, setIsMuted] = useState(true); 
   const [babyMicEnabled, setBabyMicEnabled] = useState(true);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -131,6 +133,13 @@ const App: React.FC = () => {
       babyIncomingAudioRef.current.srcObject = remoteStream;
     }
   }, [remoteStream, mode]);
+
+  // Sync isMuted state with DOM element property for maximum compatibility
+  useEffect(() => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.muted = isMuted;
+    }
+  }, [isMuted]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -425,6 +434,13 @@ const App: React.FC = () => {
             <div className="flex items-center gap-1.5 mt-1">
               <div className={`w-1.5 h-1.5 rounded-full ${peerConnected ? 'bg-green-500 shadow-[0_0_8px_green]' : 'bg-slate-600'}`} />
               <span className="text-[10px] font-bold text-slate-500 uppercase">{peerConnected ? 'Connected' : isConnecting ? 'Linking...' : 'Offline'}</span>
+              {!isMuted && peerConnected && (
+                <div className="flex items-center gap-0.5 ml-1">
+                  <div className="w-0.5 h-2 bg-green-400 rounded-full animate-[bounce_1s_infinite]" />
+                  <div className="w-0.5 h-3 bg-green-400 rounded-full animate-[bounce_0.8s_infinite]" />
+                  <div className="w-0.5 h-2 bg-green-400 rounded-full animate-[bounce_1.2s_infinite]" />
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -457,6 +473,19 @@ const App: React.FC = () => {
                   muted={isMuted}
                   className="w-full h-full object-cover" 
                 />
+                
+                {peerConnected && isMuted && (
+                  <div 
+                    onClick={() => setIsMuted(false)}
+                    className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] cursor-pointer group"
+                  >
+                    <div className="bg-blue-600 p-6 rounded-full shadow-2xl shadow-blue-900/40 mb-4 group-hover:scale-110 transition-transform">
+                      <VolumeX className="w-8 h-8 text-white" />
+                    </div>
+                    <p className="text-white font-bold uppercase tracking-widest text-sm animate-pulse">Tap to Unmute Audio</p>
+                  </div>
+                )}
+
                 {!peerConnected && !isConnecting && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-slate-950/80 backdrop-blur-sm text-center">
                     <Link2 className="w-8 h-8 text-slate-700 mb-4" />
@@ -467,8 +496,16 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 )}
+
                 {peerConnected && (
-                  <button onClick={() => setIsMuted(!isMuted)} className={`absolute top-4 right-4 p-3 rounded-xl backdrop-blur-md ${isMuted ? 'bg-red-500/20 text-red-500 border border-red-500/40' : 'bg-black/40 text-white'}`}>
+                  <button 
+                    onClick={() => setIsMuted(!isMuted)} 
+                    className={`absolute top-4 right-4 p-3 rounded-xl backdrop-blur-md transition-all z-10 ${
+                      isMuted 
+                        ? 'bg-red-500 text-white shadow-lg shadow-red-900/20' 
+                        : 'bg-black/40 text-white border border-white/10 hover:bg-black/60'
+                    }`}
+                  >
                     {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                   </button>
                 )}
