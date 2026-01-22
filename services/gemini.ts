@@ -5,23 +5,13 @@ import { FileData, AnalysisResult } from "../types.ts";
 const MODEL_NAME = 'gemini-3-pro-preview';
 
 export class GeminiService {
-  private ai: GoogleGenAI | null = null;
-
-  constructor() {
-    try {
-      // Accessing process.env.API_KEY as requested. 
-      // Wrapped in try/catch to ensure app doesn't go blank if process is undefined in specific browser contexts.
-      const apiKey = process.env.API_KEY;
-      if (apiKey) {
-        this.ai = new GoogleGenAI({ apiKey });
-      }
-    } catch (e) {
-      console.error("AI Service failed to initialize:", e);
-    }
-  }
-
+  /**
+   * Analyzes a file (image or text) related to baby care using Gemini.
+   * Instantiates a fresh GoogleGenAI client per call to ensure up-to-date configuration.
+   */
   async analyzeFile(file: FileData): Promise<AnalysisResult> {
-    if (!this.ai) throw new Error("AI service not available.");
+    // Fresh instance per call to ensure most up-to-date environment variables/keys
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
     const isImage = file.type.startsWith('image/');
     
@@ -38,7 +28,7 @@ export class GeminiService {
       parts.push({ text: `Analyze the following baby care log file named "${file.name}":\n\n${file.content}` });
     }
 
-    const response = await this.ai.models.generateContent({
+    const response = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: { parts },
       config: {
@@ -97,6 +87,7 @@ export class GeminiService {
     });
 
     try {
+      // Accessing .text as a property as per current SDK
       const text = response.text;
       if (!text) throw new Error("No response text from Gemini");
       return JSON.parse(text);
@@ -106,10 +97,13 @@ export class GeminiService {
     }
   }
 
+  /**
+   * Asks a question about an uploaded file using a chat session.
+   */
   async askQuestion(file: FileData, question: string, history: {role: string, text: string}[]): Promise<string> {
-    if (!this.ai) throw new Error("AI service not available.");
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    const chat = this.ai.chats.create({
+    const chat = ai.chats.create({
       model: MODEL_NAME,
       config: {
         systemInstruction: `You are an expert pediatric consultant assistant. You are helping a parent understand logs/images related to their baby's care. Use the file "${file.name}" as context. Be encouraging, professional, and clear.`
@@ -127,6 +121,7 @@ export class GeminiService {
     }
 
     const result = await chat.sendMessage({ message: prompt });
+    // Using .text property to extract output
     return result.text || "I'm sorry, I couldn't process that question at this time.";
   }
 }
