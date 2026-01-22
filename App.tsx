@@ -21,7 +21,8 @@ import {
   Sparkles,
   BrainCircuit,
   Upload,
-  ShieldAlert
+  ShieldAlert,
+  LogOut
 } from 'lucide-react';
 import { AppMode, BabyStatus, FileData, AnalysisResult } from './types.ts';
 import { GeminiService } from './services/gemini.ts';
@@ -150,8 +151,51 @@ const App: React.FC = () => {
     oscillator.connect(dst);
     oscillator.start();
     const track = dst.stream.getAudioTracks()[0];
-    track.enabled = false; // It's silent anyway, but let's be safe
+    track.enabled = false; 
     return track;
+  };
+
+  const resetStation = () => {
+    // Stop all media tracks
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+      localStreamRef.current = null;
+    }
+    if (localMicStreamRef.current) {
+      localMicStreamRef.current.getTracks().forEach(t => t.stop());
+      localMicStreamRef.current = null;
+    }
+    if (remoteStreamRef.current) {
+      remoteStreamRef.current.getTracks().forEach(t => t.stop());
+      remoteStreamRef.current = null;
+    }
+
+    // Close Peer connections
+    if (activeCallRef.current) {
+      activeCallRef.current.close();
+      activeCallRef.current = null;
+    }
+    if (dataConnRef.current) {
+      dataConnRef.current.close();
+      dataConnRef.current = null;
+    }
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
+    }
+
+    // Reset local state
+    setPeerId('');
+    setPeerConnected(false);
+    setIsLive(false);
+    setStealthMode(false);
+    setStatus({
+      isCrying: false,
+      noiseLevel: 0,
+      lastEvent: 'Standby',
+      statusMessage: 'Nursery is quiet'
+    });
+    setMode('ROLE_SELECTION');
   };
 
   // Initialize Peer
@@ -175,8 +219,6 @@ const App: React.FC = () => {
       peer.on('call', (call: any) => {
         activeCallRef.current = call;
         
-        // CRITICAL FIX: The answer must ALWAYS contain an audio track to reserve a transceiver slot.
-        // If localStreamRef is null (monitor hasn't started), use a generated silent track.
         let answerStream: MediaStream;
         if (mode === 'BABY_STATION' && localStreamRef.current) {
           answerStream = localStreamRef.current;
@@ -232,8 +274,6 @@ const App: React.FC = () => {
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLive(true);
       
-      // CRITICAL FIX: Replace both audio and video tracks in existing call.
-      // Because we ensure the initial answer has both tracks, these senders will exist.
       if (activeCallRef.current && activeCallRef.current.peerConnection) {
         const senders = activeCallRef.current.peerConnection.getSenders();
         const videoTrack = stream.getVideoTracks()[0];
@@ -255,7 +295,7 @@ const App: React.FC = () => {
       source.connect(analyser);
 
       const interval = setInterval(() => {
-        if (mode !== 'BABY_STATION') { clearInterval(interval); return; }
+        if (mode !== 'BABY_STATION' || !localStreamRef.current) { clearInterval(interval); return; }
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         analyser.getByteFrequencyData(dataArray);
         let sum = 0;
@@ -317,7 +357,6 @@ const App: React.FC = () => {
         remoteStreamRef.current = s;
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = s;
-          // Ensure audio is unmuted if isMuted is false
           remoteVideoRef.current.muted = isMuted;
         }
         setPeerConnected(true);
@@ -441,6 +480,17 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {/* Added Back Button for Baby Station Live View */}
+            <div className={`absolute top-4 right-4 z-30 transition-opacity ${stealthMode ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+              <button 
+                onClick={resetStation}
+                className="bg-slate-900/60 backdrop-blur p-2.5 rounded-xl border border-white/10 text-white transition-all active:scale-90 hover:bg-slate-800"
+                title="Return to Menu"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
+            </div>
+
             <div className={`absolute bottom-6 inset-x-0 flex items-center justify-center gap-3 transition-all ${stealthMode ? 'opacity-0 translate-y-10 pointer-events-none' : 'opacity-100'}`}>
               <div className="bg-slate-900/90 backdrop-blur-2xl p-3 rounded-[2rem] flex items-center gap-2 border border-slate-800 shadow-2xl">
                 <button onClick={toggleBabyMic} className={`p-4 rounded-xl transition-colors ${babyMicEnabled ? 'bg-slate-800' : 'bg-red-600'}`}>
@@ -473,7 +523,7 @@ const App: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between mb-4 h-12 shrink-0 z-10">
         <div className="flex items-center gap-2">
-          <button onClick={() => setMode('ROLE_SELECTION')} className="p-2 hover:bg-slate-900 rounded-lg transition-all">
+          <button onClick={resetStation} className="p-2 hover:bg-slate-900 rounded-lg transition-all">
             <ChevronLeft className="w-5 h-5 text-slate-400" />
           </button>
           <div>
