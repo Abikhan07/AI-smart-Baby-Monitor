@@ -43,7 +43,8 @@ import {
   Sparkles,
   TrendingUp,
   History,
-  Volume
+  Volume,
+  UserRound
 } from 'lucide-react';
 import { AppMode, BabyStatus, LULLABIES, FileData, AnalysisResult } from './types.ts';
 import { GeminiService } from './services/gemini.ts';
@@ -80,13 +81,11 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
-  // Default to muted to satisfy browser autoplay policies
   const [isMuted, setIsMuted] = useState(true); 
   const [babyMicEnabled, setBabyMicEnabled] = useState(true);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [streamError, setStreamError] = useState<string | null>(null);
   
-  // AI Insight States
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [uploadedFile, setUploadedFile] = useState<FileData | null>(null);
@@ -107,7 +106,6 @@ const App: React.FC = () => {
   const pendingCallRef = useRef<any>(null);
   const activeCallRef = useRef<any>(null);
   const lastHeartbeatRef = useRef<number>(Date.now());
-  const wakeLockRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -123,23 +121,40 @@ const App: React.FC = () => {
     geminiRef.current = new GeminiService();
   }, []);
 
-  // Effect to attach remote stream to video/audio elements
   useEffect(() => {
     if (mode === 'PARENT_STATION' && remoteVideoRef.current && remoteStream) {
-      console.log("Attaching remote stream to Parent station video element");
+      console.log("Attaching remote stream to Parent station");
       remoteVideoRef.current.srcObject = remoteStream;
     } else if (mode === 'BABY_STATION' && babyIncomingAudioRef.current && remoteStream) {
-      console.log("Attaching remote stream to Baby station audio element");
+      console.log("Attaching remote stream to Baby station audio output");
       babyIncomingAudioRef.current.srcObject = remoteStream;
+      // Force play for browsers that block dynamic audio attachment
+      babyIncomingAudioRef.current.play().catch(e => console.warn("Audio play blocked:", e));
     }
   }, [remoteStream, mode]);
 
-  // Sync isMuted state with DOM element property for maximum compatibility
   useEffect(() => {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.muted = isMuted;
     }
   }, [isMuted]);
+
+  const toggleParentMic = (enabled: boolean) => {
+    setIsTalking(enabled);
+    if (localMicStreamRef.current) {
+      localMicStreamRef.current.getAudioTracks().forEach(track => {
+        track.enabled = enabled;
+      });
+      console.log(`Parent mic ${enabled ? 'ENABLED' : 'DISABLED'}`);
+    } else {
+      console.warn("No local mic stream found to toggle");
+    }
+    
+    // Notify baby station about parent talking status if data connection is open
+    if (dataConnRef.current?.open) {
+      dataConnRef.current.send({ type: 'PARENT_TALK_STATUS', isTalking: enabled });
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -209,6 +224,10 @@ const App: React.FC = () => {
     conn.on('data', (data: any) => {
       lastHeartbeatRef.current = Date.now();
       if (data.type === 'HEARTBEAT') return;
+      if (data.type === 'PARENT_TALK_STATUS') {
+        setIsTalking(data.isTalking);
+        return;
+      }
       if (mode === 'PARENT_STATION') setStatus(data);
     });
     conn.on('error', () => setPeerConnected(false));
@@ -260,6 +279,7 @@ const App: React.FC = () => {
       peerRef.current?.destroy();
       dataConnRef.current?.close();
       activeCallRef.current?.close();
+      localMicStreamRef.current?.getTracks().forEach(t => t.stop());
     };
   }, [mode, initPeer]);
 
@@ -323,27 +343,27 @@ const App: React.FC = () => {
       try {
         const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         localMicStreamRef.current = micStream;
-        // Keep parent's mic muted by default
+        // Mic starts muted for parent station (push to talk mode)
         micStream.getAudioTracks().forEach(t => t.enabled = false);
         localStreamForCall = new MediaStream([...micStream.getAudioTracks(), createBlankVideoTrack()]);
       } catch (err) { 
-        console.warn("Could not access parent microphone, calling with blank tracks");
+        console.warn("Microphone access denied or failed", err);
         localStreamForCall = new MediaStream([createBlankVideoTrack()]); 
       }
       const call = peerRef.current.call(targetPeerId, localStreamForCall);
       activeCallRef.current = call;
       call.on('stream', (s: MediaStream) => { 
-        console.log("Parent received remote baby stream");
+        console.log("Received remote feed from nursery");
         setRemoteStream(s); 
         setPeerConnected(true); 
         setIsConnecting(false); 
       });
       call.on('error', (e: any) => {
-        console.error("Call error:", e);
+        console.error("Call linking error:", e);
         setIsConnecting(false);
       });
     } catch (err) { 
-      console.error("Connection failed:", err);
+      console.error("Connection sequence failed:", err);
       setIsConnecting(false); 
     }
   };
@@ -375,8 +395,7 @@ const App: React.FC = () => {
   if (mode === 'BABY_STATION') {
     return (
       <div className={`h-screen w-full ${stealthMode ? 'bg-black' : 'bg-slate-950'} flex flex-col transition-colors duration-1000 overflow-hidden relative`}>
-        {/* Audio element for parent's voice */}
-        <audio ref={babyIncomingAudioRef} autoPlay />
+        <audio ref={babyIncomingAudioRef} autoPlay playsInline />
         {!isLive ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-white">
             <div className="bg-slate-900/40 p-8 rounded-3xl border border-slate-800 mb-8 w-full max-w-xs">
@@ -394,6 +413,21 @@ const App: React.FC = () => {
         ) : (
           <div className="flex-1 relative flex flex-col">
             <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover ${stealthMode ? 'opacity-0' : 'opacity-100'}`} />
+            
+            {/* Visual indicator when parent is talking */}
+            {isTalking && !stealthMode && (
+              <div className="absolute inset-0 bg-blue-600/10 pointer-events-none flex items-center justify-center">
+                <div className="bg-blue-600/80 backdrop-blur-md px-6 py-4 rounded-full flex items-center gap-4 animate-in zoom-in duration-300">
+                  <div className="flex gap-1 items-center">
+                    <div className="w-1.5 h-4 bg-white rounded-full animate-[bounce_1s_infinite]" />
+                    <div className="w-1.5 h-8 bg-white rounded-full animate-[bounce_0.8s_infinite]" />
+                    <div className="w-1.5 h-5 bg-white rounded-full animate-[bounce_1.2s_infinite]" />
+                  </div>
+                  <span className="text-white font-bold uppercase tracking-widest text-sm">Parent is speaking...</span>
+                </div>
+              </div>
+            )}
+
             {stealthMode && (
               <div className="absolute inset-0 z-50 bg-black flex flex-col items-center justify-center p-12 text-center" onDoubleClick={() => setStealthMode(false)}>
                 <Lock className="w-12 h-12 text-slate-900 mb-6" />
@@ -465,7 +499,6 @@ const App: React.FC = () => {
           <>
             <div className="flex-[3] flex flex-col gap-4 min-h-0">
               <div className={`flex-1 bg-black rounded-3xl border overflow-hidden relative transition-all duration-500 ${status.isCrying ? 'border-red-500 ring-4 ring-red-500/50 animate-alert-border' : 'border-slate-800/50'}`}>
-                {/* Remote baby feed */}
                 <video 
                   ref={remoteVideoRef} 
                   autoPlay 
@@ -512,12 +545,17 @@ const App: React.FC = () => {
               </div>
               <div className="h-24 sm:h-28 shrink-0">
                 <button 
-                  onMouseDown={() => { setIsTalking(true); localMicStreamRef.current?.getAudioTracks().forEach(t => t.enabled = true); }} 
-                  onMouseUp={() => { setIsTalking(false); localMicStreamRef.current?.getAudioTracks().forEach(t => t.enabled = false); }} 
-                  onMouseLeave={() => { setIsTalking(false); localMicStreamRef.current?.getAudioTracks().forEach(t => t.enabled = false); }}
-                  className={`w-full h-full rounded-2xl border transition-all flex items-center justify-center gap-4 ${isTalking ? 'bg-blue-600 border-blue-400' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20'}`}
+                  onMouseDown={() => toggleParentMic(true)} 
+                  onMouseUp={() => toggleParentMic(false)} 
+                  onMouseLeave={() => toggleParentMic(false)}
+                  onTouchStart={(e) => { e.preventDefault(); toggleParentMic(true); }}
+                  onTouchEnd={(e) => { e.preventDefault(); toggleParentMic(false); }}
+                  onTouchCancel={(e) => { e.preventDefault(); toggleParentMic(false); }}
+                  className={`w-full h-full rounded-2xl border transition-all flex items-center justify-center gap-4 active:scale-[0.98] ${isTalking ? 'bg-blue-600 border-blue-400' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
                 >
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isTalking ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-400'}`}><Mic className="w-6 h-6" /></div>
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isTalking ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-400'}`}>
+                    {isTalking ? <Mic className="w-6 h-6 animate-pulse" /> : <MicOff className="w-6 h-6" />}
+                  </div>
                   <div className="text-left">
                     <p className={`text-[10px] font-bold uppercase tracking-widest ${isTalking ? 'text-blue-200' : 'text-slate-500'}`}>Push to Talk</p>
                     <h3 className="text-lg font-bold">{isTalking ? 'Nursery listening...' : 'Hold to Speak'}</h3>
@@ -541,7 +579,6 @@ const App: React.FC = () => {
           </>
         ) : (
           <div className="flex-1 flex flex-col lg:flex-row gap-6 bg-slate-900/30 rounded-3xl border border-slate-800 p-6 overflow-hidden">
-            {/* AI Analysis Section */}
             <div className="flex-[2] flex flex-col gap-6 overflow-y-auto custom-scrollbar pr-2">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center">
                 <div className="w-12 h-12 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4"><BrainCircuit className="w-6 h-6 text-blue-500" /></div>
@@ -616,7 +653,6 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {/* Chat/Assistant Section */}
             <div className="flex-1 flex flex-col bg-slate-950/50 rounded-2xl border border-slate-800/50 overflow-hidden">
               <div className="p-4 border-bottom border-slate-800 flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-blue-500" />
