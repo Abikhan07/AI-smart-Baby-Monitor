@@ -87,9 +87,10 @@ const App: React.FC = () => {
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [streamError, setStreamError] = useState<string | null>(null);
   
-  // Baby Station specific: User must "unlock" audio for browser to allow playback
+  // Audio state management
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [incomingVolume, setIncomingVolume] = useState(0);
+  const [localMicVolume, setLocalMicVolume] = useState(0); // Parent side mic feedback
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -113,13 +114,13 @@ const App: React.FC = () => {
   const lastHeartbeatRef = useRef<number>(Date.now());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Audio Processing Refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const incomingAnalyserRef = useRef<AnalyserNode | null>(null);
+  const localMicAnalyserRef = useRef<AnalyserNode | null>(null);
   const analysisIntervalRef = useRef<number | null>(null);
   const geminiRef = useRef<GeminiService | null>(null);
-
-  // For visualizer of incoming audio (Parent's voice)
-  const incomingAnalyserRef = useRef<AnalyserNode | null>(null);
 
   useEffect(() => {
     sensitivityRef.current = sensitivity;
@@ -129,42 +130,75 @@ const App: React.FC = () => {
     geminiRef.current = new GeminiService();
   }, []);
 
+  // Handle stream attachment and visualization
   useEffect(() => {
     if (mode === 'PARENT_STATION' && remoteVideoRef.current && remoteStream) {
-      console.log("Attaching remote stream to Parent station");
       remoteVideoRef.current.srcObject = remoteStream;
     } else if (mode === 'BABY_STATION' && babyIncomingAudioRef.current && remoteStream) {
-      console.log("Attaching remote stream to Baby station audio output");
       babyIncomingAudioRef.current.srcObject = remoteStream;
       
-      // Attempt to visualize the incoming parent audio
-      try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const source = audioCtx.createMediaStreamSource(remoteStream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 64;
-        source.connect(analyser);
-        incomingAnalyserRef.current = analyser;
-        
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        const updateIncomingLevel = () => {
-          if (!incomingAnalyserRef.current) return;
-          incomingAnalyserRef.current.getByteFrequencyData(dataArray);
-          let sum = 0;
-          for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
-          setIncomingVolume(Math.round((sum / dataArray.length) / 255 * 100));
-          requestAnimationFrame(updateIncomingLevel);
-        };
-        updateIncomingLevel();
-      } catch (e) {
-        console.warn("Visualizer init failed", e);
+      // Setup incoming visualizer for Parent's voice on Baby Station
+      if (!incomingAnalyserRef.current) {
+        try {
+          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const source = audioCtx.createMediaStreamSource(remoteStream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          source.connect(analyser);
+          incomingAnalyserRef.current = analyser;
+          audioContextRef.current = audioCtx; // Reuse for unlocking
+        } catch (e) {
+          console.warn("Incoming visualizer setup failed:", e);
+        }
       }
 
       if (audioUnlocked) {
-        babyIncomingAudioRef.current.play().catch(e => console.warn("Audio play blocked even after unlock:", e));
+        babyIncomingAudioRef.current.play().catch(e => console.warn("Audio play blocked:", e));
       }
     }
   }, [remoteStream, mode, audioUnlocked]);
+
+  // Visualizer loop for Baby Station (Incoming from Parent)
+  useEffect(() => {
+    let animationFrame: number;
+    const dataArray = new Uint8Array(32);
+    
+    const updateLevels = () => {
+      if (incomingAnalyserRef.current && isTalking) {
+        incomingAnalyserRef.current.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+        setIncomingVolume(Math.round((sum / dataArray.length) / 255 * 100));
+      } else {
+        setIncomingVolume(0);
+      }
+      animationFrame = requestAnimationFrame(updateLevels);
+    };
+    
+    updateLevels();
+    return () => cancelAnimationFrame(animationFrame);
+  }, [isTalking]);
+
+  // Visualizer loop for Parent Station (Local Mic Check)
+  useEffect(() => {
+    let animationFrame: number;
+    const dataArray = new Uint8Array(32);
+    
+    const updateLocalLevels = () => {
+      if (localMicAnalyserRef.current && isTalking) {
+        localMicAnalyserRef.current.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+        setLocalMicVolume(Math.round((sum / dataArray.length) / 255 * 100));
+      } else {
+        setLocalMicVolume(0);
+      }
+      animationFrame = requestAnimationFrame(updateLocalLevels);
+    };
+    
+    if (mode === 'PARENT_STATION') updateLocalLevels();
+    return () => cancelAnimationFrame(animationFrame);
+  }, [isTalking, mode]);
 
   useEffect(() => {
     if (remoteVideoRef.current) {
@@ -172,11 +206,19 @@ const App: React.FC = () => {
     }
   }, [isMuted]);
 
-  const unlockAudio = () => {
-    setAudioUnlocked(true);
-    // Silent play to trigger browser interaction requirement
-    if (babyIncomingAudioRef.current) {
-      babyIncomingAudioRef.current.play().catch(() => {});
+  const unlockAudio = async () => {
+    try {
+      // Resume audio context if it exists
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+      setAudioUnlocked(true);
+      if (babyIncomingAudioRef.current) {
+        babyIncomingAudioRef.current.muted = false;
+        await babyIncomingAudioRef.current.play();
+      }
+    } catch (e) {
+      console.warn("Unlock audio failed:", e);
     }
   };
 
@@ -186,9 +228,6 @@ const App: React.FC = () => {
       localMicStreamRef.current.getAudioTracks().forEach(track => {
         track.enabled = enabled;
       });
-      console.log(`Parent mic ${enabled ? 'ENABLED' : 'DISABLED'}`);
-    } else {
-      console.warn("No local mic stream found to toggle");
     }
     
     if (dataConnRef.current?.open) {
@@ -196,87 +235,33 @@ const App: React.FC = () => {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !geminiRef.current) return;
-
-    setIsAnalyzing(true);
-    setAnalysisResult(null);
-    setChatHistory([]);
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const content = event.target?.result as string;
-      const fileData: FileData = {
-        name: file.name,
-        type: file.type,
-        content: content
-      };
-      setUploadedFile(fileData);
-      try {
-        const result = await geminiRef.current!.analyzeFile(fileData);
-        setAnalysisResult(result);
-      } catch (err) {
-        console.error("AI Analysis failed", err);
-      } finally {
-        setIsAnalyzing(false);
-      }
-    };
-
-    if (file.type.startsWith('image/')) {
-      reader.readAsDataURL(file);
-    } else {
-      reader.readAsText(file);
-    }
-  };
-
-  const handleAskQuestion = async () => {
-    if (!chatMessage.trim() || !uploadedFile || !geminiRef.current || isAsking) return;
-
-    const userMsg = { role: 'user', text: chatMessage };
-    setChatHistory(prev => [...prev, userMsg]);
-    setChatMessage('');
-    setIsAsking(true);
-
-    try {
-      const response = await geminiRef.current.askQuestion(uploadedFile, chatMessage, chatHistory);
-      setChatHistory(prev => [...prev, { role: 'model', text: response }]);
-    } catch (err) {
-      setChatHistory(prev => [...prev, { role: 'model', text: "Error connecting to AI. Please try again." }]);
-    } finally {
-      setIsAsking(false);
-    }
-  };
-
-  const createBlankVideoTrack = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1; canvas.height = 1;
-    const ctx = canvas.getContext('2d');
-    if (ctx) { ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, 1, 1); }
-    const stream = (canvas as any).captureStream(1);
-    return stream.getVideoTracks()[0];
-  };
-
   const handleDataConnection = useCallback((conn: any) => {
     if (dataConnRef.current) dataConnRef.current.close();
     dataConnRef.current = conn;
-    conn.on('open', () => { setPeerConnected(true); setIsConnecting(false); lastHeartbeatRef.current = Date.now(); });
+    conn.on('open', () => { 
+      setPeerConnected(true); 
+      setIsConnecting(false); 
+      lastHeartbeatRef.current = Date.now(); 
+    });
     conn.on('data', (data: any) => {
       lastHeartbeatRef.current = Date.now();
       if (data.type === 'HEARTBEAT') return;
       if (data.type === 'PARENT_TALK_STATUS') {
         setIsTalking(data.isTalking);
+        // Force playback on baby station when parent starts talking
+        if (data.isTalking && babyIncomingAudioRef.current && audioUnlocked) {
+          babyIncomingAudioRef.current.play().catch(() => {});
+        }
         return;
       }
       if (mode === 'PARENT_STATION') setStatus(data);
     });
     conn.on('error', () => setPeerConnected(false));
     conn.on('close', () => { setPeerConnected(false); dataConnRef.current = null; });
-  }, [mode]);
+  }, [mode, audioUnlocked]);
 
   const initPeer = useCallback((customId?: string) => {
     if (typeof Peer === 'undefined') {
-      console.warn("PeerJS not loaded yet, retrying...");
       setTimeout(() => initPeer(customId), 1000);
       return;
     }
@@ -291,11 +276,9 @@ const App: React.FC = () => {
     peer.on('error', (err: any) => { if (err.type === 'network' || err.type === 'server-error') setIsConnecting(false); });
     peer.on('connection', (conn: any) => handleDataConnection(conn));
     peer.on('call', (call: any) => {
-      console.log("Receiving incoming call from parent...");
       activeCallRef.current = call;
       if (mode === 'BABY_STATION') {
         if (!streamRef.current) { 
-          console.log("Call received but camera not started. Queuing call.");
           pendingCallRef.current = call; 
           return; 
         }
@@ -305,7 +288,6 @@ const App: React.FC = () => {
         call.answer(new MediaStream([createBlankVideoTrack()]));
       }
       call.on('stream', (s: MediaStream) => { 
-        console.log("Received remote stream (parent mic)");
         setRemoteStream(s); 
         setPeerConnected(true); 
       });
@@ -323,35 +305,6 @@ const App: React.FC = () => {
     };
   }, [mode, initPeer]);
 
-  const startAudioAnalysis = (stream: MediaStream) => {
-    if (audioContextRef.current) audioContextRef.current.close();
-    if (analysisIntervalRef.current) window.clearInterval(analysisIntervalRef.current);
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const source = audioCtx.createMediaStreamSource(stream);
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
-    audioContextRef.current = audioCtx;
-    analyserRef.current = analyser;
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-    const checkNoise = () => {
-      if (!analyserRef.current) return;
-      if (audioContextRef.current?.state === 'suspended') audioContextRef.current.resume();
-      analyserRef.current.getByteFrequencyData(dataArray);
-      let sum = 0;
-      for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-      const average = sum / dataArray.length / 255; 
-      const currentThreshold = 0.4 - (sensitivityRef.current / 100) * 0.38;
-      const isCrying = average > currentThreshold;
-      const newStatus = { isCrying, noiseLevel: Math.round(average * 100), lastEvent: isCrying ? 'Cry Alert' : 'Normal', statusMessage: isCrying ? 'BABY IS CRYING' : 'Nursery is quiet' };
-      if (mode === 'BABY_STATION') {
-        setStatus(newStatus);
-        if (dataConnRef.current?.open) dataConnRef.current.send(newStatus);
-      }
-    };
-    analysisIntervalRef.current = window.setInterval(checkNoise, NOISE_POLL_INTERVAL);
-  };
-
   const startMonitoring = async (targetFacingMode: 'user' | 'environment' = facingMode) => {
     setStreamError(null);
     try {
@@ -363,9 +316,30 @@ const App: React.FC = () => {
       stream.getAudioTracks().forEach(t => t.enabled = babyMicEnabledRef.current);
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
-      startAudioAnalysis(stream);
+      
+      // Start Nursery audio analysis
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+      
+      const checkNoise = () => {
+        if (!analyserRef.current) return;
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const average = sum / dataArray.length / 255; 
+        const isCrying = average > (0.4 - (sensitivityRef.current / 100) * 0.38);
+        const newStatus = { isCrying, noiseLevel: Math.round(average * 100), lastEvent: isCrying ? 'Cry Alert' : 'Normal', statusMessage: isCrying ? 'BABY IS CRYING' : 'Nursery is quiet' };
+        setStatus(newStatus);
+        if (dataConnRef.current?.open) dataConnRef.current.send(newStatus);
+      };
+      analysisIntervalRef.current = window.setInterval(checkNoise, NOISE_POLL_INTERVAL);
+
       if (pendingCallRef.current) {
-        console.log("Answering queued call with active stream");
         pendingCallRef.current.answer(stream);
         pendingCallRef.current = null;
       }
@@ -379,52 +353,97 @@ const App: React.FC = () => {
     try {
       const conn = peerRef.current.connect(targetPeerId, { reliable: true });
       handleDataConnection(conn);
+      
       let localStreamForCall;
       try {
         const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         localMicStreamRef.current = micStream;
-        micStream.getAudioTracks().forEach(t => t.enabled = false);
+        
+        // Setup Parent-side mic visualizer for self-feedback
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(micStream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        source.connect(analyser);
+        localMicAnalyserRef.current = analyser;
+
+        // "Warm up" the stream: brief enable then disable for Push-to-Talk
+        micStream.getAudioTracks().forEach(t => t.enabled = true);
+        setTimeout(() => {
+           if (!isTalking) micStream.getAudioTracks().forEach(t => t.enabled = false);
+        }, 500);
+
         localStreamForCall = new MediaStream([...micStream.getAudioTracks(), createBlankVideoTrack()]);
       } catch (err) { 
-        console.warn("Microphone access denied or failed", err);
         localStreamForCall = new MediaStream([createBlankVideoTrack()]); 
       }
+      
       const call = peerRef.current.call(targetPeerId, localStreamForCall);
       activeCallRef.current = call;
       call.on('stream', (s: MediaStream) => { 
-        console.log("Received remote feed from nursery");
         setRemoteStream(s); 
         setPeerConnected(true); 
         setIsConnecting(false); 
       });
-      call.on('error', (e: any) => {
-        console.error("Call linking error:", e);
-        setIsConnecting(false);
-      });
     } catch (err) { 
-      console.error("Connection sequence failed:", err);
       setIsConnecting(false); 
     }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !geminiRef.current) return;
+    setIsAnalyzing(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const content = event.target?.result as string;
+      setUploadedFile({ name: file.name, type: file.type, content });
+      try {
+        const result = await geminiRef.current!.analyzeFile({ name: file.name, type: file.type, content });
+        setAnalysisResult(result);
+      } catch (err) { console.error(err); } finally { setIsAnalyzing(false); }
+    };
+    if (file.type.startsWith('image/')) reader.readAsDataURL(file); else reader.readAsText(file);
+  };
+
+  const handleAskQuestion = async () => {
+    if (!chatMessage.trim() || !uploadedFile || !geminiRef.current || isAsking) return;
+    setChatHistory(prev => [...prev, { role: 'user', text: chatMessage }]);
+    const currentMsg = chatMessage;
+    setChatMessage('');
+    setIsAsking(true);
+    try {
+      const response = await geminiRef.current.askQuestion(uploadedFile, currentMsg, chatHistory);
+      setChatHistory(prev => [...prev, { role: 'model', text: response }]);
+    } catch (err) {
+      setChatHistory(prev => [...prev, { role: 'model', text: "Error connecting to AI." }]);
+    } finally { setIsAsking(false); }
+  };
+
+  const createBlankVideoTrack = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1; canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    if (ctx) { ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, 1, 1); }
+    return (canvas as any).captureStream(1).getVideoTracks()[0];
   };
 
   if (mode === 'ROLE_SELECTION') {
     return (
       <div className="h-screen w-full bg-slate-950 flex flex-col items-center justify-center p-6 text-white overflow-hidden">
-        <div className="text-center mb-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
-          <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-blue-900/40"><Baby className="w-8 h-8 text-white" /></div>
+        <div className="text-center mb-10">
+          <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl"><Baby className="w-8 h-8 text-white" /></div>
           <h1 className="text-3xl font-bold tracking-tight mb-2">Lullaby AI</h1>
-          <p className="text-slate-400 text-sm">Select station mode to begin</p>
+          <p className="text-slate-400 text-sm">Select station mode</p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl w-full">
-          <button onClick={() => setMode('BABY_STATION')} className="group bg-slate-900/50 hover:bg-slate-900 p-8 rounded-3xl border border-slate-800 transition-all flex flex-col items-center text-center">
-            <Activity className="w-8 h-8 text-blue-500 mb-4 group-hover:scale-110" />
-            <h3 className="text-xl font-semibold mb-1">Baby Station</h3>
-            <p className="text-slate-500 text-xs">Transmitter for nursery</p>
+          <button onClick={() => setMode('BABY_STATION')} className="bg-slate-900/50 p-8 rounded-3xl border border-slate-800 flex flex-col items-center">
+            <Activity className="w-8 h-8 text-blue-500 mb-4" />
+            <h3 className="text-xl font-semibold">Baby Station</h3>
           </button>
-          <button onClick={() => setMode('PARENT_STATION')} className="group bg-slate-900/50 hover:bg-slate-900 p-8 rounded-3xl border border-slate-800 transition-all flex flex-col items-center text-center">
-            <Monitor className="w-8 h-8 text-indigo-500 mb-4 group-hover:scale-110" />
-            <h3 className="text-xl font-semibold mb-1">Parent Station</h3>
-            <p className="text-slate-500 text-xs">Receiver for monitoring</p>
+          <button onClick={() => setMode('PARENT_STATION')} className="bg-slate-900/50 p-8 rounded-3xl border border-slate-800 flex flex-col items-center">
+            <Monitor className="w-8 h-8 text-indigo-500 mb-4" />
+            <h3 className="text-xl font-semibold">Parent Station</h3>
           </button>
         </div>
       </div>
@@ -433,85 +452,67 @@ const App: React.FC = () => {
 
   if (mode === 'BABY_STATION') {
     return (
-      <div className={`h-screen w-full ${stealthMode ? 'bg-black' : 'bg-slate-950'} flex flex-col transition-colors duration-1000 overflow-hidden relative`}>
-        <audio ref={babyIncomingAudioRef} autoPlay playsInline />
+      <div className={`h-screen w-full ${stealthMode ? 'bg-black' : 'bg-slate-950'} flex flex-col relative overflow-hidden`}>
+        <audio ref={babyIncomingAudioRef} autoPlay playsInline muted={false} />
         {!isLive ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-white">
-            <div className="bg-slate-900/40 p-8 rounded-3xl border border-slate-800 mb-8 w-full max-w-xs">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-2 block">Pairing Code</span>
-              <div className="text-5xl font-mono font-bold tracking-tighter mb-4">{peerId || '-----'}</div>
-              <button onClick={() => { navigator.clipboard.writeText(peerId); setCopied(true); setTimeout(()=>setCopied(false), 2000); }} className="text-xs text-slate-500 flex items-center gap-2 mx-auto">
-                {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />} {copied ? 'Copied' : 'Copy'}
-              </button>
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-white">
+            <div className="bg-slate-900/40 p-8 rounded-3xl border border-slate-800 mb-8 w-full max-w-xs text-center">
+              <span className="text-[10px] font-bold uppercase text-blue-500 mb-2 block">Pairing Code</span>
+              <div className="text-5xl font-mono font-bold">{peerId || '-----'}</div>
             </div>
-            <button onClick={() => startMonitoring()} className="bg-blue-600 hover:bg-blue-500 px-8 py-4 rounded-2xl font-bold flex items-center gap-3">
-              <Power className="w-5 h-5" /> Start Monitor
-            </button>
+            <button onClick={() => startMonitoring()} className="bg-blue-600 px-8 py-4 rounded-2xl font-bold flex items-center gap-3"><Power className="w-5 h-5" /> Start Monitor</button>
             <button onClick={() => setMode('ROLE_SELECTION')} className="mt-6 text-slate-500 text-xs font-bold uppercase">Exit</button>
           </div>
         ) : (
-          <div className="flex-1 relative flex flex-col">
+          <div className="flex-1 relative">
             <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover ${stealthMode ? 'opacity-0' : 'opacity-100'}`} />
             
-            {/* Audio Unlock Overlay (Required by browsers) */}
             {!audioUnlocked && !stealthMode && (
               <div className="absolute inset-0 z-[60] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center">
-                <div className="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center mb-6 animate-bounce">
-                  <Volume2 className="w-10 h-10 text-white" />
-                </div>
-                <h3 className="text-xl font-bold mb-2">Enable Nursery Audio</h3>
-                <p className="text-slate-400 text-sm mb-8 max-w-xs">Tap to allow the baby station to play your voice when you speak from the parent station.</p>
-                <button onClick={unlockAudio} className="bg-blue-600 hover:bg-blue-500 px-10 py-4 rounded-2xl font-bold text-white shadow-xl shadow-blue-900/40">
-                  Allow Audio Playback
-                </button>
+                <div className="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center mb-6 animate-bounce"><Volume2 className="w-10 h-10 text-white" /></div>
+                <h3 className="text-xl font-bold mb-2">Unlock Nursery Speaker</h3>
+                <p className="text-slate-400 text-sm mb-8">Tap to enable audio playback from the parent station.</p>
+                <button onClick={unlockAudio} className="bg-blue-600 px-10 py-4 rounded-2xl font-bold text-white shadow-xl">Enable Speaker</button>
               </div>
             )}
 
-            {/* Visual indicator when parent is talking */}
             {isTalking && !stealthMode && (
               <div className="absolute inset-0 bg-blue-600/10 pointer-events-none flex flex-col items-center justify-center">
-                <div className="bg-blue-600/80 backdrop-blur-md px-6 py-4 rounded-full flex items-center gap-4 animate-in zoom-in duration-300">
+                <div className="bg-blue-600/90 backdrop-blur-md px-6 py-4 rounded-full flex items-center gap-4 animate-in zoom-in duration-300">
                   <div className="flex gap-1 items-end h-6">
-                    <div className="w-1.5 bg-white rounded-full transition-all duration-75" style={{ height: `${Math.max(4, incomingVolume * 0.8)}px` }} />
-                    <div className="w-1.5 bg-white rounded-full transition-all duration-75" style={{ height: `${Math.max(4, incomingVolume * 1.2)}px` }} />
-                    <div className="w-1.5 bg-white rounded-full transition-all duration-75" style={{ height: `${Math.max(4, incomingVolume * 0.9)}px` }} />
+                    <div className="w-2 bg-white rounded-full transition-all duration-75" style={{ height: `${Math.max(4, incomingVolume * 0.8)}px` }} />
+                    <div className="w-2 bg-white rounded-full transition-all duration-75" style={{ height: `${Math.max(4, incomingVolume * 1.5)}px` }} />
+                    <div className="w-2 bg-white rounded-full transition-all duration-75" style={{ height: `${Math.max(4, incomingVolume * 0.7)}px` }} />
                   </div>
                   <span className="text-white font-bold uppercase tracking-widest text-sm">Parent is speaking...</span>
                 </div>
-                {incomingVolume === 0 && (
-                   <div className="mt-4 bg-red-500/80 text-white text-[10px] font-bold uppercase px-3 py-1 rounded-full animate-pulse">
-                     Checking Mic Signal...
-                   </div>
+                {incomingVolume < 5 && (
+                  <div className="mt-4 bg-red-600/80 px-4 py-1.5 rounded-full text-[10px] font-bold text-white flex items-center gap-2 animate-pulse">
+                     <AlertTriangle className="w-3 h-3" /> Waiting for audio signal
+                  </div>
                 )}
               </div>
             )}
 
             {stealthMode && (
-              <div className="absolute inset-0 z-50 bg-black flex flex-col items-center justify-center p-12 text-center" onDoubleClick={() => setStealthMode(false)}>
-                <Lock className="w-12 h-12 text-slate-900 mb-6" />
-                <h2 className="text-slate-900 text-sm font-bold uppercase">Nursery Mode Active</h2>
-                <p className="text-slate-900 text-[10px] mt-4">Double tap to unlock.</p>
+              <div className="absolute inset-0 z-50 bg-black flex flex-col items-center justify-center p-12" onDoubleClick={() => setStealthMode(false)}>
+                <Lock className="w-12 h-12 text-slate-900" />
+                <p className="text-slate-900 text-[10px] mt-4 font-bold uppercase">Double tap to unlock</p>
               </div>
             )}
             
             <div className="absolute top-6 left-6 flex flex-col gap-2">
               <div className="bg-red-600 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2"><span className="w-2 h-2 bg-white rounded-full animate-pulse" /> Live</div>
               <div className="bg-slate-900/80 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2 border border-white/10">{status.noiseLevel}% Noise</div>
-              {audioUnlocked && (
-                <div className="bg-green-600/80 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2 border border-white/10">
-                  <Headphones className="w-3 h-3" /> Audio Linked
-                </div>
-              )}
+              {audioUnlocked && <div className="bg-green-600/80 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2"><Headphones className="w-3 h-3" /> Speaker Ready</div>}
             </div>
 
-            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-4 ${stealthMode ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-4 ${stealthMode ? 'opacity-0' : 'opacity-100'}`}>
               <div className="bg-slate-900/60 backdrop-blur-md p-2 rounded-2xl border border-white/10 flex items-center gap-2">
-                <button onClick={() => { const ns = !babyMicEnabled; setBabyMicEnabled(ns); babyMicEnabledRef.current = ns; streamRef.current?.getAudioTracks().forEach(t => t.enabled = ns); }} className={`p-4 rounded-xl ${babyMicEnabled ? 'text-white' : 'bg-red-500 text-white'}`}>
+                <button onClick={() => { const ns = !babyMicEnabled; setBabyMicEnabled(ns); babyMicEnabledRef.current = ns; streamRef.current?.getAudioTracks().forEach(t => t.enabled = ns); }} className={`p-4 rounded-xl ${babyMicEnabled ? 'text-white' : 'bg-red-500'}`}>
                   {babyMicEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
                 </button>
-                <button onClick={() => setStealthMode(true)} className="p-4 rounded-xl bg-slate-800 text-white flex items-center gap-2 px-6">
-                  <Lock className="w-5 h-5" /> <span className="text-[10px] font-bold uppercase">Nursery Mode</span>
-                </button>
+                <button onClick={() => setStealthMode(true)} className="p-4 rounded-xl bg-slate-800 text-white flex items-center gap-2 px-6"><Lock className="w-5 h-5" /> Nursery Mode</button>
                 <button onClick={() => setShowSettings(!showSettings)} className="p-4 rounded-xl text-white"><Settings2 className="w-5 h-5" /></button>
               </div>
             </div>
@@ -524,248 +525,113 @@ const App: React.FC = () => {
   // PARENT STATION UI
   return (
     <div className="h-screen w-full bg-slate-950 flex flex-col p-4 md:p-6 text-white overflow-hidden">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4 h-12 shrink-0">
         <div className="flex items-center gap-3">
-          <button onClick={() => setMode('ROLE_SELECTION')} className="p-2 hover:bg-slate-900 rounded-lg transition-colors"><ChevronLeft className="w-5 h-5 text-slate-400" /></button>
+          <button onClick={() => setMode('ROLE_SELECTION')} className="p-2 hover:bg-slate-900 rounded-lg"><ChevronLeft className="w-5 h-5 text-slate-400" /></button>
           <div>
             <h2 className="text-sm font-bold tracking-tight">Parent Station</h2>
             <div className="flex items-center gap-1.5 mt-1">
               <div className={`w-1.5 h-1.5 rounded-full ${peerConnected ? 'bg-green-500 shadow-[0_0_8px_green]' : 'bg-slate-600'}`} />
-              <span className="text-[10px] font-bold text-slate-500 uppercase">{peerConnected ? 'Connected' : isConnecting ? 'Linking...' : 'Offline'}</span>
-              {!isMuted && peerConnected && (
-                <div className="flex items-center gap-0.5 ml-1">
-                  <div className="w-0.5 h-2 bg-green-400 rounded-full animate-[bounce_1s_infinite]" />
-                  <div className="w-0.5 h-3 bg-green-400 rounded-full animate-[bounce_0.8s_infinite]" />
-                  <div className="w-0.5 h-2 bg-green-400 rounded-full animate-[bounce_1.2s_infinite]" />
-                </div>
-              )}
+              <span className="text-[10px] font-bold text-slate-500 uppercase">{peerConnected ? 'Connected' : 'Offline'}</span>
             </div>
           </div>
         </div>
-        
         <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
-          <button onClick={() => setParentView('FEED')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${parentView === 'FEED' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
-            <Activity className="w-3.5 h-3.5" /> Feed
-          </button>
-          <button onClick={() => setParentView('AI_INSIGHTS')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${parentView === 'AI_INSIGHTS' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
-            <BrainCircuit className="w-3.5 h-3.5" /> AI Insights
-          </button>
+          <button onClick={() => setParentView('FEED')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${parentView === 'FEED' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>Feed</button>
+          <button onClick={() => setParentView('AI_INSIGHTS')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${parentView === 'AI_INSIGHTS' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>AI Insights</button>
         </div>
-
         <div className={`px-4 py-2 rounded-xl border flex items-center gap-2 ${status.isCrying ? 'bg-red-500/10 border-red-500 text-red-500 animate-pulse' : 'bg-slate-900/50 border-slate-800 text-slate-500'}`}>
-          <Baby className="w-4 h-4" />
-          <span className="text-[10px] font-bold uppercase">{status.statusMessage}</span>
+          <Baby className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">{status.statusMessage}</span>
         </div>
       </div>
 
       <div className="flex-1 flex gap-4 min-h-0 overflow-hidden">
         {parentView === 'FEED' ? (
-          <>
-            <div className="flex-[3] flex flex-col gap-4 min-h-0">
-              <div className={`flex-1 bg-black rounded-3xl border overflow-hidden relative transition-all duration-500 ${status.isCrying ? 'border-red-500 ring-4 ring-red-500/50 animate-alert-border' : 'border-slate-800/50'}`}>
-                <video 
-                  ref={remoteVideoRef} 
-                  autoPlay 
-                  playsInline 
-                  muted={isMuted}
-                  className="w-full h-full object-cover" 
-                />
-                
-                {peerConnected && isMuted && (
-                  <div 
-                    onClick={() => setIsMuted(false)}
-                    className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] cursor-pointer group"
-                  >
-                    <div className="bg-blue-600 p-6 rounded-full shadow-2xl shadow-blue-900/40 mb-4 group-hover:scale-110 transition-transform">
-                      <VolumeX className="w-8 h-8 text-white" />
-                    </div>
-                    <p className="text-white font-bold uppercase tracking-widest text-sm animate-pulse">Tap to Unmute Audio</p>
-                  </div>
-                )}
-
-                {!peerConnected && !isConnecting && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-slate-950/80 backdrop-blur-sm text-center">
-                    <Link2 className="w-8 h-8 text-slate-700 mb-4" />
-                    <h3 className="text-lg font-bold mb-4">Pair Nursery Device</h3>
-                    <div className="flex gap-2 w-full max-w-xs">
-                      <input type="text" maxLength={5} placeholder="00000" value={targetPeerId} onChange={(e)=>setTargetPeerId(e.target.value.replace(/\D/g,''))} className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-center text-xl font-mono font-bold text-blue-500" />
-                      <button onClick={connectToBaby} className="bg-blue-600 px-5 rounded-xl"><Play className="w-5 h-5" /></button>
-                    </div>
-                  </div>
-                )}
-
-                {peerConnected && (
-                  <button 
-                    onClick={() => setIsMuted(!isMuted)} 
-                    className={`absolute top-4 right-4 p-3 rounded-xl backdrop-blur-md transition-all z-10 ${
-                      isMuted 
-                        ? 'bg-red-500 text-white shadow-lg shadow-red-900/20' 
-                        : 'bg-black/40 text-white border border-white/10 hover:bg-black/60'
-                    }`}
-                  >
-                    {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-                  </button>
-                )}
-              </div>
-              <div className="h-24 sm:h-28 shrink-0">
-                <button 
-                  onMouseDown={() => toggleParentMic(true)} 
-                  onMouseUp={() => toggleParentMic(false)} 
-                  onMouseLeave={() => toggleParentMic(false)}
-                  onTouchStart={(e) => { e.preventDefault(); toggleParentMic(true); }}
-                  onTouchEnd={(e) => { e.preventDefault(); toggleParentMic(false); }}
-                  onTouchCancel={(e) => { e.preventDefault(); toggleParentMic(false); }}
-                  className={`w-full h-full rounded-2xl border transition-all flex items-center justify-center gap-4 active:scale-[0.98] ${isTalking ? 'bg-blue-600 border-blue-400' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
-                >
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isTalking ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-400'}`}>
-                    {isTalking ? <Mic className="w-6 h-6 animate-pulse" /> : <MicOff className="w-6 h-6" />}
-                  </div>
-                  <div className="text-left">
-                    <p className={`text-[10px] font-bold uppercase tracking-widest ${isTalking ? 'text-blue-200' : 'text-slate-500'}`}>Push to Talk</p>
-                    <h3 className="text-lg font-bold">{isTalking ? 'Nursery listening...' : 'Hold to Speak'}</h3>
-                  </div>
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 hidden lg:flex flex-col gap-4">
-              <div className="flex-1 bg-slate-900/40 border border-slate-800 rounded-3xl p-4 flex flex-col">
-                <span className="text-[10px] font-bold uppercase text-slate-500 mb-4">Quick Lullabies</span>
-                <div className="space-y-2 overflow-y-auto custom-scrollbar">
-                  {LULLABIES.map(l => (
-                    <button key={l.id} className="w-full p-3 bg-slate-900 border border-slate-800 rounded-xl hover:border-blue-500 transition-all text-left flex items-center justify-between group">
-                      <div><p className="text-xs font-bold group-hover:text-blue-400">{l.name}</p><p className="text-[10px] text-slate-600">{l.description}</p></div>
-                      <Play className="w-3 h-3 text-slate-700 group-hover:text-blue-400" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </>
-        ) : (
-          <div className="flex-1 flex flex-col lg:flex-row gap-6 bg-slate-900/30 rounded-3xl border border-slate-800 p-6 overflow-hidden">
-            {/* AI Analysis Section */}
-            <div className="flex-[2] flex flex-col gap-6 overflow-y-auto custom-scrollbar pr-2">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center">
-                <div className="w-12 h-12 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4"><BrainCircuit className="w-6 h-6 text-blue-500" /></div>
-                <h3 className="text-xl font-bold mb-2">Health & Sleep Analysis</h3>
-                <p className="text-slate-400 text-sm mb-6">Upload logs or photos of sleep charts for AI-powered pediatric insights.</p>
-                <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.csv,.jpg,.jpeg,.png" />
-                <button onClick={() => fileInputRef.current?.click()} className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-xl font-bold flex items-center gap-2 mx-auto transition-all">
-                  <Upload className="w-4 h-4" /> {isAnalyzing ? 'Analyzing...' : 'Upload Data'}
-                </button>
-              </div>
-
-              {isAnalyzing && (
-                <div className="flex flex-col items-center justify-center py-12 animate-pulse">
-                  <Sparkles className="w-10 h-10 text-blue-500 animate-spin mb-4" />
-                  <p className="text-slate-400 font-bold uppercase text-xs tracking-widest">Processing Intelligence...</p>
+          <div className="flex-[3] flex flex-col gap-4 min-h-0">
+            <div className={`flex-1 bg-black rounded-3xl border overflow-hidden relative ${status.isCrying ? 'border-red-500 ring-4 ring-red-500/50' : 'border-slate-800/50'}`}>
+              <video ref={remoteVideoRef} autoPlay playsInline muted={isMuted} className="w-full h-full object-cover" />
+              {peerConnected && isMuted && (
+                <div onClick={() => setIsMuted(false)} className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] cursor-pointer">
+                  <div className="bg-blue-600 p-6 rounded-full mb-4 shadow-2xl"><VolumeX className="w-8 h-8 text-white" /></div>
+                  <p className="text-white font-bold uppercase tracking-widest text-sm animate-pulse">Tap to Unmute Nursery</p>
                 </div>
               )}
-
+              {!peerConnected && !isConnecting && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-slate-950/80 backdrop-blur-sm text-center">
+                  <Link2 className="w-8 h-8 text-slate-700 mb-4" />
+                  <h3 className="text-lg font-bold mb-4">Pair Nursery Device</h3>
+                  <div className="flex gap-2 w-full max-w-xs">
+                    <input type="text" maxLength={5} placeholder="00000" value={targetPeerId} onChange={(e)=>setTargetPeerId(e.target.value.replace(/\D/g,''))} className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-center text-xl font-mono font-bold text-blue-500" />
+                    <button onClick={connectToBaby} className="bg-blue-600 px-5 rounded-xl"><Play className="w-5 h-5" /></button>
+                  </div>
+                </div>
+              )}
+              {peerConnected && (
+                <button onClick={() => setIsMuted(!isMuted)} className={`absolute top-4 right-4 p-3 rounded-xl backdrop-blur-md ${isMuted ? 'bg-red-500' : 'bg-black/40 border border-white/10'}`}>
+                  {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                </button>
+              )}
+            </div>
+            <div className="h-28 shrink-0 relative">
+              <button 
+                onMouseDown={() => toggleParentMic(true)} 
+                onMouseUp={() => toggleParentMic(false)} 
+                onMouseLeave={() => toggleParentMic(false)}
+                onTouchStart={(e) => { e.preventDefault(); toggleParentMic(true); }}
+                onTouchEnd={(e) => { e.preventDefault(); toggleParentMic(false); }}
+                className={`w-full h-full rounded-2xl border transition-all flex items-center justify-center gap-4 ${isTalking ? 'bg-blue-600 border-blue-400' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
+              >
+                <div className="relative">
+                  <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-colors ${isTalking ? 'bg-white text-blue-600 shadow-2xl' : 'bg-slate-800 text-slate-400'}`}>
+                    {isTalking ? <Mic className="w-7 h-7" /> : <MicOff className="w-7 h-7" />}
+                  </div>
+                  {/* Local Mic Volume Bar */}
+                  {isTalking && (
+                    <div className="absolute -right-2 top-0 bottom-0 w-1 bg-white/20 rounded-full overflow-hidden">
+                      <div className="w-full bg-white absolute bottom-0 transition-all duration-75" style={{ height: `${localMicVolume}%` }} />
+                    </div>
+                  )}
+                </div>
+                <div className="text-left">
+                  <p className={`text-[10px] font-bold uppercase tracking-widest ${isTalking ? 'text-blue-100' : 'text-slate-500'}`}>{isTalking ? 'Speaking to Nursery' : 'Push to Talk'}</p>
+                  <h3 className="text-xl font-bold">{isTalking ? 'Release to Stop' : 'Hold to Speak'}</h3>
+                </div>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 bg-slate-900/30 rounded-3xl border border-slate-800 p-6 flex flex-col lg:flex-row gap-6">
+            <div className="flex-[2] overflow-y-auto custom-scrollbar">
+              <div className="bg-slate-900 p-8 rounded-2xl text-center border border-slate-800">
+                <BrainCircuit className="w-10 h-10 text-blue-500 mx-auto mb-4" />
+                <h3 className="text-xl font-bold mb-2">Health Data Analysis</h3>
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.csv,.jpg,.jpeg,.png" />
+                <button onClick={() => fileInputRef.current?.click()} className="bg-blue-600 px-6 py-3 rounded-xl font-bold flex items-center gap-2 mx-auto mt-4 transition-all hover:scale-105">
+                  <Upload className="w-4 h-4" /> {isAnalyzing ? 'Analyzing...' : 'Upload Baby Log'}
+                </button>
+              </div>
               {analysisResult && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                    <h4 className="text-xs font-bold text-blue-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <Sparkles className="w-3.5 h-3.5" /> Summary
-                    </h4>
+                <div className="mt-8 space-y-6">
+                  <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800">
+                    <h4 className="text-xs font-bold text-blue-500 uppercase mb-4 flex items-center gap-2"><Sparkles className="w-3.5 h-3.5" /> Summary</h4>
                     <p className="text-slate-300 text-sm leading-relaxed">{analysisResult.summary}</p>
                   </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                      <h4 className="text-xs font-bold text-green-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <TrendingUp className="w-3.5 h-3.5" /> Key Insights
-                      </h4>
-                      <ul className="space-y-3">
-                        {analysisResult.keyInsights.map((insight, idx) => (
-                          <li key={idx} className="flex gap-3 text-sm text-slate-400">
-                            <div className="w-1.5 h-1.5 bg-green-500 rounded-full shrink-0 mt-1.5" />
-                            {insight}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                      <h4 className="text-xs font-bold text-purple-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <TrendingUp className="w-3.5 h-3.5" /> Charted Data
-                      </h4>
-                      {analysisResult.visualizations.map((viz, idx) => (
-                        <div key={idx} className="mb-4 last:mb-0">
-                          <p className="text-[10px] text-slate-500 uppercase mb-2 font-bold">{viz.label}</p>
-                          <div className="space-y-2">
-                            {viz.data.map((d, i) => {
-                              const maxVal = Math.max(...viz.data.map(x => x.value));
-                              const pct = (d.value / maxVal) * 100;
-                              return (
-                                <div key={i}>
-                                  <div className="flex justify-between text-[10px] mb-1">
-                                    <span className="text-slate-400">{d.name}</span>
-                                    <span className="text-slate-200">{d.value}</span>
-                                  </div>
-                                  <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
-                                    <div className="h-full bg-blue-500 rounded-full" style={{ width: `${pct}%` }} />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
-
-            <div className="flex-1 flex flex-col bg-slate-950/50 rounded-2xl border border-slate-800/50 overflow-hidden">
-              <div className="p-4 border-bottom border-slate-800 flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-blue-500" />
-                <span className="text-xs font-bold uppercase tracking-widest">Ask Assistant</span>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                {chatHistory.length === 0 && (
-                  <div className="h-full flex flex-col items-center justify-center text-center opacity-30 px-6">
-                    <History className="w-8 h-8 mb-2" />
-                    <p className="text-xs">Ask specific questions about the uploaded data here.</p>
-                  </div>
-                )}
-                {chatHistory.map((chat, idx) => (
-                  <div key={idx} className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[85%] p-3 rounded-2xl text-xs leading-relaxed ${chat.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300'}`}>
-                      {chat.text}
-                    </div>
-                  </div>
-                ))}
-                {isAsking && (
-                  <div className="flex justify-start">
-                    <div className="bg-slate-800 p-3 rounded-2xl flex gap-1 animate-pulse">
-                      <div className="w-1.5 h-1.5 bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="w-1.5 h-1.5 bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="w-1.5 h-1.5 bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="p-3 bg-slate-900 border-t border-slate-800 flex gap-2">
-                <input 
-                  type="text" 
-                  value={chatMessage}
-                  onChange={(e) => setChatMessage(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion()}
-                  placeholder={uploadedFile ? "Ask about the data..." : "Upload a file first"} 
-                  disabled={!uploadedFile || isAsking}
-                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 disabled:opacity-50" 
-                />
-                <button 
-                  onClick={handleAskQuestion}
-                  disabled={!uploadedFile || isAsking || !chatMessage.trim()}
-                  className="p-2.5 bg-blue-600 rounded-xl hover:bg-blue-500 transition-all disabled:opacity-30"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
+            <div className="flex-1 bg-slate-950/50 rounded-2xl border border-slate-800 flex flex-col overflow-hidden">
+               <div className="p-4 border-b border-slate-800"><span className="text-xs font-bold uppercase text-slate-500 tracking-widest">Assistant Chat</span></div>
+               <div className="flex-1 p-4 space-y-4 overflow-y-auto custom-scrollbar">
+                 {chatHistory.map((chat, idx) => (
+                   <div key={idx} className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                     <div className={`max-w-[85%] p-3 rounded-2xl text-xs ${chat.role === 'user' ? 'bg-blue-600' : 'bg-slate-800'}`}>{chat.text}</div>
+                   </div>
+                 ))}
+               </div>
+               <div className="p-3 bg-slate-900 border-t border-slate-800 flex gap-2">
+                 <input type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion()} placeholder="Ask a question..." className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs" />
+                 <button onClick={handleAskQuestion} className="p-2.5 bg-blue-600 rounded-xl"><Send className="w-4 h-4" /></button>
+               </div>
             </div>
           </div>
         )}
