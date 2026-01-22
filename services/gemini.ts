@@ -98,29 +98,48 @@ export class GeminiService {
   }
 
   /**
-   * Asks a question about an uploaded file using a chat session.
+   * Asks a question about an uploaded file using a chat session with history.
    */
   async askQuestion(file: FileData, question: string, history: {role: string, text: string}[]): Promise<string> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+    // Convert flat history to the format expected by the SDK
+    const formattedHistory = history.map(h => ({
+      role: h.role === 'user' ? 'user' : 'model',
+      parts: [{ text: h.text }]
+    }));
+
+    // If starting a new session, prepend the context as the first turn
+    if (formattedHistory.length === 0) {
+      const isImage = file.type.startsWith('image/');
+      const contextPart = isImage ? {
+        inlineData: {
+          mimeType: file.type,
+          data: file.content.split(',')[1]
+        }
+      } : {
+        text: `Context file (${file.name}):\n${file.content}`
+      };
+
+      formattedHistory.push({
+        role: 'user',
+        parts: [contextPart, { text: "I'm providing this file as context. Please acknowledge you've received it so I can start asking questions." }]
+      });
+      formattedHistory.push({
+        role: 'model',
+        parts: [{ text: "I have received the context file and analyzed it. What would you like to know about it?" }]
+      });
+    }
+
     const chat = ai.chats.create({
       model: MODEL_NAME,
+      history: formattedHistory,
       config: {
-        systemInstruction: `You are an expert pediatric consultant assistant. You are helping a parent understand logs/images related to their baby's care. Use the file "${file.name}" as context. Be encouraging, professional, and clear.`
+        systemInstruction: `You are an expert pediatric consultant assistant. You are helping a parent understand logs/images related to their baby's care. Use the provided context as the source of truth. Be encouraging, professional, and clear.`
       }
     });
 
-    let prompt = question;
-    if (history.length === 0) {
-      const isImage = file.type.startsWith('image/');
-      if (!isImage) {
-        prompt = `Based on this content: "${file.content.substring(0, 5000)}...", answer: ${question}`;
-      } else {
-        prompt = `Based on the previously uploaded image, answer: ${question}`;
-      }
-    }
-
-    const result = await chat.sendMessage({ message: prompt });
+    const result = await chat.sendMessage({ message: question });
     // Using .text property to extract output
     return result.text || "I'm sorry, I couldn't process that question at this time.";
   }
