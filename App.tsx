@@ -89,8 +89,9 @@ const App: React.FC = () => {
   
   // Audio state management
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const audioUnlockedRef = useRef(false);
   const [incomingVolume, setIncomingVolume] = useState(0);
-  const [localMicVolume, setLocalMicVolume] = useState(0); // Parent side mic feedback
+  const [localMicVolume, setLocalMicVolume] = useState(0); 
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -113,6 +114,7 @@ const App: React.FC = () => {
   const activeCallRef = useRef<any>(null);
   const lastHeartbeatRef = useRef<number>(Date.now());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const persistentPeerIdRef = useRef<string | null>(null);
 
   // Audio Processing Refs
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -133,11 +135,14 @@ const App: React.FC = () => {
   // Handle stream attachment and visualization
   useEffect(() => {
     if (mode === 'PARENT_STATION' && remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
+      if (remoteVideoRef.current.srcObject !== remoteStream) {
+        remoteVideoRef.current.srcObject = remoteStream;
+      }
     } else if (mode === 'BABY_STATION' && babyIncomingAudioRef.current && remoteStream) {
-      babyIncomingAudioRef.current.srcObject = remoteStream;
+      if (babyIncomingAudioRef.current.srcObject !== remoteStream) {
+        babyIncomingAudioRef.current.srcObject = remoteStream;
+      }
       
-      // Setup incoming visualizer for Parent's voice on Baby Station
       if (!incomingAnalyserRef.current) {
         try {
           const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -146,7 +151,7 @@ const App: React.FC = () => {
           analyser.fftSize = 64;
           source.connect(analyser);
           incomingAnalyserRef.current = analyser;
-          audioContextRef.current = audioCtx; // Reuse for unlocking
+          audioContextRef.current = audioCtx; 
         } catch (e) {
           console.warn("Incoming visualizer setup failed:", e);
         }
@@ -208,11 +213,11 @@ const App: React.FC = () => {
 
   const unlockAudio = async () => {
     try {
-      // Resume audio context if it exists
       if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
         await audioContextRef.current.resume();
       }
       setAudioUnlocked(true);
+      audioUnlockedRef.current = true;
       if (babyIncomingAudioRef.current) {
         babyIncomingAudioRef.current.muted = false;
         await babyIncomingAudioRef.current.play();
@@ -236,46 +241,73 @@ const App: React.FC = () => {
   };
 
   const handleDataConnection = useCallback((conn: any) => {
-    if (dataConnRef.current) dataConnRef.current.close();
+    if (dataConnRef.current && dataConnRef.current !== conn) {
+        dataConnRef.current.close();
+    }
     dataConnRef.current = conn;
+    
     conn.on('open', () => { 
       setPeerConnected(true); 
       setIsConnecting(false); 
       lastHeartbeatRef.current = Date.now(); 
     });
+    
     conn.on('data', (data: any) => {
       lastHeartbeatRef.current = Date.now();
       if (data.type === 'HEARTBEAT') return;
       if (data.type === 'PARENT_TALK_STATUS') {
         setIsTalking(data.isTalking);
-        // Force playback on baby station when parent starts talking
-        if (data.isTalking && babyIncomingAudioRef.current && audioUnlocked) {
+        if (data.isTalking && babyIncomingAudioRef.current && audioUnlockedRef.current) {
           babyIncomingAudioRef.current.play().catch(() => {});
         }
         return;
       }
-      if (mode === 'PARENT_STATION') setStatus(data);
+      // Status updates only relevant for parent viewing baby
+      setStatus(prev => {
+          if (data.noiseLevel !== undefined) return data;
+          return prev;
+      });
     });
+    
     conn.on('error', () => setPeerConnected(false));
     conn.on('close', () => { setPeerConnected(false); dataConnRef.current = null; });
-  }, [mode, audioUnlocked]);
+  }, []); // Stable callback
 
   const initPeer = useCallback((customId?: string) => {
     if (typeof Peer === 'undefined') {
       setTimeout(() => initPeer(customId), 1000);
       return;
     }
-    if (peerRef.current) peerRef.current.destroy();
-    const peer = new Peer(mode === 'BABY_STATION' ? (customId || Math.floor(10000 + Math.random() * 90000).toString()) : undefined, {
+    
+    if (peerRef.current) return; // Prevent double init
+
+    const id = mode === 'BABY_STATION' ? (customId || persistentPeerIdRef.current || Math.floor(10000 + Math.random() * 90000).toString()) : undefined;
+    if (mode === 'BABY_STATION' && !persistentPeerIdRef.current) {
+        persistentPeerIdRef.current = id as string;
+    }
+
+    const peer = new Peer(id, {
       config: { iceServers: ICE_SERVERS },
       debug: 1
     });
+    
     peerRef.current = peer;
-    peer.on('open', (id: string) => setPeerId(id));
+    
+    peer.on('open', (newId: string) => {
+        setPeerId(newId);
+    });
+    
     peer.on('disconnected', () => peer.reconnect());
-    peer.on('error', (err: any) => { if (err.type === 'network' || err.type === 'server-error') setIsConnecting(false); });
+    
+    peer.on('error', (err: any) => { 
+        console.error("PeerJS Error:", err);
+        if (err.type === 'network' || err.type === 'server-error') setIsConnecting(false); 
+    });
+    
     peer.on('connection', (conn: any) => handleDataConnection(conn));
+    
     peer.on('call', (call: any) => {
+      console.log("Incoming call detected...");
       activeCallRef.current = call;
       if (mode === 'BABY_STATION') {
         if (!streamRef.current) { 
@@ -285,23 +317,39 @@ const App: React.FC = () => {
         streamRef.current.getAudioTracks().forEach(t => t.enabled = babyMicEnabledRef.current);
         call.answer(streamRef.current);
       } else {
+        // Parent answering nursery feed call (usually nursery initiates if previously connected, 
+        // but here parent usually initiates). If nursery calls back:
         call.answer(new MediaStream([createBlankVideoTrack()]));
       }
+      
       call.on('stream', (s: MediaStream) => { 
         setRemoteStream(s); 
         setPeerConnected(true); 
       });
-      call.on('close', () => { setRemoteStream(null); activeCallRef.current = null; });
+      
+      call.on('close', () => { 
+          setRemoteStream(null); 
+          activeCallRef.current = null; 
+      });
     });
   }, [mode, handleDataConnection]);
 
   useEffect(() => {
-    if (mode !== 'ROLE_SELECTION') initPeer();
+    if (mode !== 'ROLE_SELECTION') {
+        initPeer();
+    }
     return () => {
-      peerRef.current?.destroy();
-      dataConnRef.current?.close();
-      activeCallRef.current?.close();
-      localMicStreamRef.current?.getTracks().forEach(t => t.stop());
+      // Only destroy if changing mode back to role selection
+      if (mode === 'ROLE_SELECTION') {
+          peerRef.current?.destroy();
+          peerRef.current = null;
+          dataConnRef.current?.close();
+          dataConnRef.current = null;
+          activeCallRef.current?.close();
+          activeCallRef.current = null;
+          localMicStreamRef.current?.getTracks().forEach(t => t.stop());
+          persistentPeerIdRef.current = null;
+      }
     };
   }, [mode, initPeer]);
 
@@ -317,7 +365,6 @@ const App: React.FC = () => {
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       
-      // Start Nursery audio analysis
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const source = audioCtx.createMediaStreamSource(stream);
       const analyser = audioCtx.createAnalyser();
@@ -359,7 +406,6 @@ const App: React.FC = () => {
         const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         localMicStreamRef.current = micStream;
         
-        // Setup Parent-side mic visualizer for self-feedback
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const source = audioCtx.createMediaStreamSource(micStream);
         const analyser = audioCtx.createAnalyser();
@@ -367,11 +413,10 @@ const App: React.FC = () => {
         source.connect(analyser);
         localMicAnalyserRef.current = analyser;
 
-        // "Warm up" the stream: brief enable then disable for Push-to-Talk
         micStream.getAudioTracks().forEach(t => t.enabled = true);
         setTimeout(() => {
            if (!isTalking) micStream.getAudioTracks().forEach(t => t.enabled = false);
-        }, 500);
+        }, 800);
 
         localStreamForCall = new MediaStream([...micStream.getAudioTracks(), createBlankVideoTrack()]);
       } catch (err) { 
@@ -437,11 +482,11 @@ const App: React.FC = () => {
           <p className="text-slate-400 text-sm">Select station mode</p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl w-full">
-          <button onClick={() => setMode('BABY_STATION')} className="bg-slate-900/50 p-8 rounded-3xl border border-slate-800 flex flex-col items-center">
+          <button onClick={() => setMode('BABY_STATION')} className="bg-slate-900/50 p-8 rounded-3xl border border-slate-800 flex flex-col items-center transition-all hover:bg-slate-900">
             <Activity className="w-8 h-8 text-blue-500 mb-4" />
             <h3 className="text-xl font-semibold">Baby Station</h3>
           </button>
-          <button onClick={() => setMode('PARENT_STATION')} className="bg-slate-900/50 p-8 rounded-3xl border border-slate-800 flex flex-col items-center">
+          <button onClick={() => setMode('PARENT_STATION')} className="bg-slate-900/50 p-8 rounded-3xl border border-slate-800 flex flex-col items-center transition-all hover:bg-slate-900">
             <Monitor className="w-8 h-8 text-indigo-500 mb-4" />
             <h3 className="text-xl font-semibold">Parent Station</h3>
           </button>
@@ -464,7 +509,7 @@ const App: React.FC = () => {
             <button onClick={() => setMode('ROLE_SELECTION')} className="mt-6 text-slate-500 text-xs font-bold uppercase">Exit</button>
           </div>
         ) : (
-          <div className="flex-1 relative">
+          <div className="flex-1 relative h-full">
             <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover ${stealthMode ? 'opacity-0' : 'opacity-100'}`} />
             
             {!audioUnlocked && !stealthMode && (
@@ -472,7 +517,7 @@ const App: React.FC = () => {
                 <div className="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center mb-6 animate-bounce"><Volume2 className="w-10 h-10 text-white" /></div>
                 <h3 className="text-xl font-bold mb-2">Unlock Nursery Speaker</h3>
                 <p className="text-slate-400 text-sm mb-8">Tap to enable audio playback from the parent station.</p>
-                <button onClick={unlockAudio} className="bg-blue-600 px-10 py-4 rounded-2xl font-bold text-white shadow-xl">Enable Speaker</button>
+                <button onClick={unlockAudio} className="bg-blue-600 px-10 py-4 rounded-2xl font-bold text-white shadow-xl hover:bg-blue-500">Enable Speaker</button>
               </div>
             )}
 
@@ -488,7 +533,7 @@ const App: React.FC = () => {
                 </div>
                 {incomingVolume < 5 && (
                   <div className="mt-4 bg-red-600/80 px-4 py-1.5 rounded-full text-[10px] font-bold text-white flex items-center gap-2 animate-pulse">
-                     <AlertTriangle className="w-3 h-3" /> Waiting for audio signal
+                     <AlertTriangle className="w-3 h-3" /> Signal Waiting...
                   </div>
                 )}
               </div>
@@ -497,14 +542,14 @@ const App: React.FC = () => {
             {stealthMode && (
               <div className="absolute inset-0 z-50 bg-black flex flex-col items-center justify-center p-12" onDoubleClick={() => setStealthMode(false)}>
                 <Lock className="w-12 h-12 text-slate-900" />
-                <p className="text-slate-900 text-[10px] mt-4 font-bold uppercase">Double tap to unlock</p>
+                <p className="text-slate-900 text-[10px] mt-4 font-bold uppercase tracking-widest">Double tap to unlock</p>
               </div>
             )}
             
             <div className="absolute top-6 left-6 flex flex-col gap-2">
               <div className="bg-red-600 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2"><span className="w-2 h-2 bg-white rounded-full animate-pulse" /> Live</div>
               <div className="bg-slate-900/80 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2 border border-white/10">{status.noiseLevel}% Noise</div>
-              {audioUnlocked && <div className="bg-green-600/80 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2"><Headphones className="w-3 h-3" /> Speaker Ready</div>}
+              {audioUnlocked && <div className="bg-green-600/80 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2 border border-white/10"><Headphones className="w-3 h-3" /> Speaker Ready</div>}
             </div>
 
             <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-4 ${stealthMode ? 'opacity-0' : 'opacity-100'}`}>
@@ -512,7 +557,7 @@ const App: React.FC = () => {
                 <button onClick={() => { const ns = !babyMicEnabled; setBabyMicEnabled(ns); babyMicEnabledRef.current = ns; streamRef.current?.getAudioTracks().forEach(t => t.enabled = ns); }} className={`p-4 rounded-xl ${babyMicEnabled ? 'text-white' : 'bg-red-500'}`}>
                   {babyMicEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
                 </button>
-                <button onClick={() => setStealthMode(true)} className="p-4 rounded-xl bg-slate-800 text-white flex items-center gap-2 px-6"><Lock className="w-5 h-5" /> Nursery Mode</button>
+                <button onClick={() => setStealthMode(true)} className="p-4 rounded-xl bg-slate-800 text-white flex items-center gap-2 px-6"><Lock className="w-5 h-5" /> <span className="text-[10px] font-bold">Nursery Mode</span></button>
                 <button onClick={() => setShowSettings(!showSettings)} className="p-4 rounded-xl text-white"><Settings2 className="w-5 h-5" /></button>
               </div>
             </div>
@@ -551,8 +596,8 @@ const App: React.FC = () => {
             <div className={`flex-1 bg-black rounded-3xl border overflow-hidden relative ${status.isCrying ? 'border-red-500 ring-4 ring-red-500/50' : 'border-slate-800/50'}`}>
               <video ref={remoteVideoRef} autoPlay playsInline muted={isMuted} className="w-full h-full object-cover" />
               {peerConnected && isMuted && (
-                <div onClick={() => setIsMuted(false)} className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] cursor-pointer">
-                  <div className="bg-blue-600 p-6 rounded-full mb-4 shadow-2xl"><VolumeX className="w-8 h-8 text-white" /></div>
+                <div onClick={() => setIsMuted(false)} className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] cursor-pointer group">
+                  <div className="bg-blue-600 p-6 rounded-full mb-4 shadow-2xl transition-transform group-hover:scale-110"><VolumeX className="w-8 h-8 text-white" /></div>
                   <p className="text-white font-bold uppercase tracking-widest text-sm animate-pulse">Tap to Unmute Nursery</p>
                 </div>
               )}
@@ -567,7 +612,7 @@ const App: React.FC = () => {
                 </div>
               )}
               {peerConnected && (
-                <button onClick={() => setIsMuted(!isMuted)} className={`absolute top-4 right-4 p-3 rounded-xl backdrop-blur-md ${isMuted ? 'bg-red-500' : 'bg-black/40 border border-white/10'}`}>
+                <button onClick={() => setIsMuted(!isMuted)} className={`absolute top-4 right-4 p-3 rounded-xl backdrop-blur-md transition-all ${isMuted ? 'bg-red-500' : 'bg-black/40 border border-white/10'}`}>
                   {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                 </button>
               )}
@@ -579,13 +624,12 @@ const App: React.FC = () => {
                 onMouseLeave={() => toggleParentMic(false)}
                 onTouchStart={(e) => { e.preventDefault(); toggleParentMic(true); }}
                 onTouchEnd={(e) => { e.preventDefault(); toggleParentMic(false); }}
-                className={`w-full h-full rounded-2xl border transition-all flex items-center justify-center gap-4 ${isTalking ? 'bg-blue-600 border-blue-400' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
+                className={`w-full h-full rounded-2xl border transition-all flex items-center justify-center gap-4 active:scale-[0.98] ${isTalking ? 'bg-blue-600 border-blue-400' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
               >
                 <div className="relative">
                   <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-colors ${isTalking ? 'bg-white text-blue-600 shadow-2xl' : 'bg-slate-800 text-slate-400'}`}>
                     {isTalking ? <Mic className="w-7 h-7" /> : <MicOff className="w-7 h-7" />}
                   </div>
-                  {/* Local Mic Volume Bar */}
                   {isTalking && (
                     <div className="absolute -right-2 top-0 bottom-0 w-1 bg-white/20 rounded-full overflow-hidden">
                       <div className="w-full bg-white absolute bottom-0 transition-all duration-75" style={{ height: `${localMicVolume}%` }} />
@@ -606,7 +650,7 @@ const App: React.FC = () => {
                 <BrainCircuit className="w-10 h-10 text-blue-500 mx-auto mb-4" />
                 <h3 className="text-xl font-bold mb-2">Health Data Analysis</h3>
                 <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.csv,.jpg,.jpeg,.png" />
-                <button onClick={() => fileInputRef.current?.click()} className="bg-blue-600 px-6 py-3 rounded-xl font-bold flex items-center gap-2 mx-auto mt-4 transition-all hover:scale-105">
+                <button onClick={() => fileInputRef.current?.click()} className="bg-blue-600 px-6 py-3 rounded-xl font-bold flex items-center gap-2 mx-auto mt-4 transition-all hover:scale-105 hover:bg-blue-500">
                   <Upload className="w-4 h-4" /> {isAnalyzing ? 'Analyzing...' : 'Upload Baby Log'}
                 </button>
               </div>
@@ -620,17 +664,21 @@ const App: React.FC = () => {
               )}
             </div>
             <div className="flex-1 bg-slate-950/50 rounded-2xl border border-slate-800 flex flex-col overflow-hidden">
-               <div className="p-4 border-b border-slate-800"><span className="text-xs font-bold uppercase text-slate-500 tracking-widest">Assistant Chat</span></div>
+               <div className="p-4 border-b border-slate-800 flex items-center gap-2">
+                 <MessageSquare className="w-4 h-4 text-blue-500" />
+                 <span className="text-xs font-bold uppercase text-slate-500 tracking-widest">Assistant Chat</span>
+               </div>
                <div className="flex-1 p-4 space-y-4 overflow-y-auto custom-scrollbar">
                  {chatHistory.map((chat, idx) => (
                    <div key={idx} className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                      <div className={`max-w-[85%] p-3 rounded-2xl text-xs ${chat.role === 'user' ? 'bg-blue-600' : 'bg-slate-800'}`}>{chat.text}</div>
                    </div>
                  ))}
+                 {isAsking && <div className="p-3 bg-slate-800 w-12 rounded-2xl animate-pulse">...</div>}
                </div>
                <div className="p-3 bg-slate-900 border-t border-slate-800 flex gap-2">
-                 <input type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion()} placeholder="Ask a question..." className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs" />
-                 <button onClick={handleAskQuestion} className="p-2.5 bg-blue-600 rounded-xl"><Send className="w-4 h-4" /></button>
+                 <input type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion()} placeholder="Ask a question..." className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500" />
+                 <button onClick={handleAskQuestion} disabled={!chatMessage.trim()} className="p-2.5 bg-blue-600 rounded-xl transition-all disabled:opacity-50"><Send className="w-4 h-4" /></button>
                </div>
             </div>
           </div>
