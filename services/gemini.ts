@@ -103,8 +103,9 @@ export class GeminiService {
   async askQuestion(file: FileData, question: string, history: {role: string, text: string}[]): Promise<string> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    // Convert flat history to the format expected by the SDK
-    const formattedHistory = history.map(h => ({
+    // Fix: Explicitly type formattedHistory as any[] to allow mixed content parts (text and inlineData)
+    // and prevent TypeScript from inferring a restricted type from the initial map.
+    const formattedHistory: any[] = history.map(h => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.text }]
     }));
