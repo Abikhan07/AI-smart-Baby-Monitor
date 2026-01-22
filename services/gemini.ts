@@ -2,14 +2,16 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { FileData, AnalysisResult } from "../types.ts";
 
+// Use 'gemini-3-pro-preview' for complex reasoning tasks related to health analysis.
 const MODEL_NAME = 'gemini-3-pro-preview';
 
 export class GeminiService {
   private ai: GoogleGenAI;
 
   constructor() {
-    // API key must be obtained from process.env.API_KEY directly.
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // Always initialize with process.env.API_KEY directly as a named parameter.
+    // Assume the API key is pre-configured and accessible.
+    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
   }
 
   async analyzeFile(file: FileData): Promise<AnalysisResult> {
@@ -28,6 +30,7 @@ export class GeminiService {
       parts.push({ text: `Analyze the following baby care log file named "${file.name}":\n\n${file.content}` });
     }
 
+    // Generate content using ai.models.generateContent with model name and configuration.
     const response = await this.ai.models.generateContent({
       model: MODEL_NAME,
       contents: { parts },
@@ -87,6 +90,7 @@ export class GeminiService {
     });
 
     try {
+      // Extract the response text using the .text property.
       const text = response.text;
       if (!text) {
         throw new Error("No response text from Gemini");
@@ -94,12 +98,12 @@ export class GeminiService {
       return JSON.parse(text);
     } catch (e) {
       console.error("Failed to parse Gemini response as JSON", e);
-      throw new Error("Invalid analysis response");
+      throw new Error("Invalid analysis response format");
     }
   }
 
   async askQuestion(file: FileData, question: string, history: {role: string, text: string}[]): Promise<string> {
-    const isImage = file.type.startsWith('image/');
+    // Start a chat session using ai.chats.create.
     const chat = this.ai.chats.create({
       model: MODEL_NAME,
       config: {
@@ -109,16 +113,16 @@ export class GeminiService {
 
     let prompt = question;
     if (history.length === 0) {
+      const isImage = file.type.startsWith('image/');
       if (!isImage) {
         prompt = `Based on this content: "${file.content.substring(0, 5000)}...", answer: ${question}`;
       } else {
-        // For images in first turn of chat, we'd ideally re-send the image part, 
-        // but for this simple implementation we rely on the context established in systemInstruction if the model supports it or simple text reference.
         prompt = `Based on the previously uploaded image, answer: ${question}`;
       }
     }
 
+    // Send message to the chat and access the .text property for the result.
     const result = await chat.sendMessage({ message: prompt });
-    return result.text || "I'm sorry, I couldn't process that question.";
+    return result.text || "I'm sorry, I couldn't process that question at this time.";
   }
 }
