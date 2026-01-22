@@ -44,7 +44,8 @@ import {
   TrendingUp,
   History,
   Volume,
-  UserRound
+  UserRound,
+  Headphones
 } from 'lucide-react';
 import { AppMode, BabyStatus, LULLABIES, FileData, AnalysisResult } from './types.ts';
 import { GeminiService } from './services/gemini.ts';
@@ -86,6 +87,10 @@ const App: React.FC = () => {
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [streamError, setStreamError] = useState<string | null>(null);
   
+  // Baby Station specific: User must "unlock" audio for browser to allow playback
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [incomingVolume, setIncomingVolume] = useState(0);
+  
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [uploadedFile, setUploadedFile] = useState<FileData | null>(null);
@@ -113,6 +118,9 @@ const App: React.FC = () => {
   const analysisIntervalRef = useRef<number | null>(null);
   const geminiRef = useRef<GeminiService | null>(null);
 
+  // For visualizer of incoming audio (Parent's voice)
+  const incomingAnalyserRef = useRef<AnalyserNode | null>(null);
+
   useEffect(() => {
     sensitivityRef.current = sensitivity;
   }, [sensitivity]);
@@ -128,16 +136,49 @@ const App: React.FC = () => {
     } else if (mode === 'BABY_STATION' && babyIncomingAudioRef.current && remoteStream) {
       console.log("Attaching remote stream to Baby station audio output");
       babyIncomingAudioRef.current.srcObject = remoteStream;
-      // Force play for browsers that block dynamic audio attachment
-      babyIncomingAudioRef.current.play().catch(e => console.warn("Audio play blocked:", e));
+      
+      // Attempt to visualize the incoming parent audio
+      try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(remoteStream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        source.connect(analyser);
+        incomingAnalyserRef.current = analyser;
+        
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const updateIncomingLevel = () => {
+          if (!incomingAnalyserRef.current) return;
+          incomingAnalyserRef.current.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+          setIncomingVolume(Math.round((sum / dataArray.length) / 255 * 100));
+          requestAnimationFrame(updateIncomingLevel);
+        };
+        updateIncomingLevel();
+      } catch (e) {
+        console.warn("Visualizer init failed", e);
+      }
+
+      if (audioUnlocked) {
+        babyIncomingAudioRef.current.play().catch(e => console.warn("Audio play blocked even after unlock:", e));
+      }
     }
-  }, [remoteStream, mode]);
+  }, [remoteStream, mode, audioUnlocked]);
 
   useEffect(() => {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.muted = isMuted;
     }
   }, [isMuted]);
+
+  const unlockAudio = () => {
+    setAudioUnlocked(true);
+    // Silent play to trigger browser interaction requirement
+    if (babyIncomingAudioRef.current) {
+      babyIncomingAudioRef.current.play().catch(() => {});
+    }
+  };
 
   const toggleParentMic = (enabled: boolean) => {
     setIsTalking(enabled);
@@ -150,7 +191,6 @@ const App: React.FC = () => {
       console.warn("No local mic stream found to toggle");
     }
     
-    // Notify baby station about parent talking status if data connection is open
     if (dataConnRef.current?.open) {
       dataConnRef.current.send({ type: 'PARENT_TALK_STATUS', isTalking: enabled });
     }
@@ -251,7 +291,7 @@ const App: React.FC = () => {
     peer.on('error', (err: any) => { if (err.type === 'network' || err.type === 'server-error') setIsConnecting(false); });
     peer.on('connection', (conn: any) => handleDataConnection(conn));
     peer.on('call', (call: any) => {
-      console.log("Receiving incoming call...");
+      console.log("Receiving incoming call from parent...");
       activeCallRef.current = call;
       if (mode === 'BABY_STATION') {
         if (!streamRef.current) { 
@@ -265,7 +305,7 @@ const App: React.FC = () => {
         call.answer(new MediaStream([createBlankVideoTrack()]));
       }
       call.on('stream', (s: MediaStream) => { 
-        console.log("Received remote stream from call");
+        console.log("Received remote stream (parent mic)");
         setRemoteStream(s); 
         setPeerConnected(true); 
       });
@@ -343,7 +383,6 @@ const App: React.FC = () => {
       try {
         const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         localMicStreamRef.current = micStream;
-        // Mic starts muted for parent station (push to talk mode)
         micStream.getAudioTracks().forEach(t => t.enabled = false);
         localStreamForCall = new MediaStream([...micStream.getAudioTracks(), createBlankVideoTrack()]);
       } catch (err) { 
@@ -414,17 +453,36 @@ const App: React.FC = () => {
           <div className="flex-1 relative flex flex-col">
             <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover ${stealthMode ? 'opacity-0' : 'opacity-100'}`} />
             
+            {/* Audio Unlock Overlay (Required by browsers) */}
+            {!audioUnlocked && !stealthMode && (
+              <div className="absolute inset-0 z-[60] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center">
+                <div className="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center mb-6 animate-bounce">
+                  <Volume2 className="w-10 h-10 text-white" />
+                </div>
+                <h3 className="text-xl font-bold mb-2">Enable Nursery Audio</h3>
+                <p className="text-slate-400 text-sm mb-8 max-w-xs">Tap to allow the baby station to play your voice when you speak from the parent station.</p>
+                <button onClick={unlockAudio} className="bg-blue-600 hover:bg-blue-500 px-10 py-4 rounded-2xl font-bold text-white shadow-xl shadow-blue-900/40">
+                  Allow Audio Playback
+                </button>
+              </div>
+            )}
+
             {/* Visual indicator when parent is talking */}
             {isTalking && !stealthMode && (
-              <div className="absolute inset-0 bg-blue-600/10 pointer-events-none flex items-center justify-center">
+              <div className="absolute inset-0 bg-blue-600/10 pointer-events-none flex flex-col items-center justify-center">
                 <div className="bg-blue-600/80 backdrop-blur-md px-6 py-4 rounded-full flex items-center gap-4 animate-in zoom-in duration-300">
-                  <div className="flex gap-1 items-center">
-                    <div className="w-1.5 h-4 bg-white rounded-full animate-[bounce_1s_infinite]" />
-                    <div className="w-1.5 h-8 bg-white rounded-full animate-[bounce_0.8s_infinite]" />
-                    <div className="w-1.5 h-5 bg-white rounded-full animate-[bounce_1.2s_infinite]" />
+                  <div className="flex gap-1 items-end h-6">
+                    <div className="w-1.5 bg-white rounded-full transition-all duration-75" style={{ height: `${Math.max(4, incomingVolume * 0.8)}px` }} />
+                    <div className="w-1.5 bg-white rounded-full transition-all duration-75" style={{ height: `${Math.max(4, incomingVolume * 1.2)}px` }} />
+                    <div className="w-1.5 bg-white rounded-full transition-all duration-75" style={{ height: `${Math.max(4, incomingVolume * 0.9)}px` }} />
                   </div>
                   <span className="text-white font-bold uppercase tracking-widest text-sm">Parent is speaking...</span>
                 </div>
+                {incomingVolume === 0 && (
+                   <div className="mt-4 bg-red-500/80 text-white text-[10px] font-bold uppercase px-3 py-1 rounded-full animate-pulse">
+                     Checking Mic Signal...
+                   </div>
+                )}
               </div>
             )}
 
@@ -435,10 +493,17 @@ const App: React.FC = () => {
                 <p className="text-slate-900 text-[10px] mt-4">Double tap to unlock.</p>
               </div>
             )}
+            
             <div className="absolute top-6 left-6 flex flex-col gap-2">
               <div className="bg-red-600 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2"><span className="w-2 h-2 bg-white rounded-full animate-pulse" /> Live</div>
               <div className="bg-slate-900/80 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2 border border-white/10">{status.noiseLevel}% Noise</div>
+              {audioUnlocked && (
+                <div className="bg-green-600/80 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2 border border-white/10">
+                  <Headphones className="w-3 h-3" /> Audio Linked
+                </div>
+              )}
             </div>
+
             <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-4 ${stealthMode ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
               <div className="bg-slate-900/60 backdrop-blur-md p-2 rounded-2xl border border-white/10 flex items-center gap-2">
                 <button onClick={() => { const ns = !babyMicEnabled; setBabyMicEnabled(ns); babyMicEnabledRef.current = ns; streamRef.current?.getAudioTracks().forEach(t => t.enabled = ns); }} className={`p-4 rounded-xl ${babyMicEnabled ? 'text-white' : 'bg-red-500 text-white'}`}>
@@ -579,6 +644,7 @@ const App: React.FC = () => {
           </>
         ) : (
           <div className="flex-1 flex flex-col lg:flex-row gap-6 bg-slate-900/30 rounded-3xl border border-slate-800 p-6 overflow-hidden">
+            {/* AI Analysis Section */}
             <div className="flex-[2] flex flex-col gap-6 overflow-y-auto custom-scrollbar pr-2">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center">
                 <div className="w-12 h-12 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4"><BrainCircuit className="w-6 h-6 text-blue-500" /></div>
