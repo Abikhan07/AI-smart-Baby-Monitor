@@ -1,10 +1,7 @@
 
 import React from 'react';
-import ReactDOM from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
-
-// The API key is assumed to be pre-configured in the environment variable process.env.API_KEY.
-// We remove the manual polyfill to avoid TypeScript errors and comply with coding standards.
 
 console.log("Lullaby AI station starting...");
 
@@ -14,7 +11,7 @@ if (!rootElement) {
 }
 
 try {
-  const root = ReactDOM.createRoot(rootElement);
+  const root = createRoot(rootElement);
   root.render(
     <React.StrictMode>
       <App />
