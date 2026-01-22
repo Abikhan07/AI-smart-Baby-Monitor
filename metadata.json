@@ -1,8 +1,16 @@
 {
-  "name": " AI - Smart Baby Monitor",
-  "description": "A sophisticated AI-powered baby monitor with real-time cry detection, smart lullabies, and remote monitoring.",
+  "name": "Lullaby AI - Smart Baby Monitor",
+  "description": "A sophisticated AI-powered baby monitor with real-time cry detection and remote monitoring.",
   "requestFramePermissions": [
     "camera",
     "microphone"
-  ]
+  ],
+  "android": {
+    "permissions": [
+      "android.permission.CAMERA",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.MODIFY_AUDIO_SETTINGS",
+      "android.permission.WAKE_LOCK"
+    ]
+  }
 }

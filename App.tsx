@@ -22,7 +22,10 @@ import {
   BrainCircuit,
   Upload,
   ShieldAlert,
-  LogOut
+  LogOut,
+  Video,
+  VideoOff,
+  User
 } from 'lucide-react';
 import { AppMode, BabyStatus, FileData, AnalysisResult } from './types.ts';
 import { GeminiService } from './services/gemini.ts';
@@ -34,7 +37,6 @@ const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' }
 ];
 
@@ -72,6 +74,10 @@ const App: React.FC = () => {
   const [babyMicEnabled, setBabyMicEnabled] = useState(true);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [localMicVolume, setLocalMicVolume] = useState(0);
+  const [parentVideoVisible, setParentVideoVisible] = useState(false);
+
+  // Parent Station specific
+  const [parentCameraEnabled, setParentCameraEnabled] = useState(false);
 
   // AI & Analysis
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -91,6 +97,7 @@ const App: React.FC = () => {
   
   // DOM Refs
   const babyIncomingAudioRef = useRef<HTMLAudioElement>(null);
+  const babyIncomingVideoRef = useRef<HTMLVideoElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   
@@ -98,9 +105,29 @@ const App: React.FC = () => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const localMicAnalyserRef = useRef<AnalyserNode | null>(null);
   const geminiRef = useRef<GeminiService | null>(null);
+  const wakeLockRef = useRef<any>(null);
 
   useEffect(() => { sensitivityRef.current = sensitivity; }, [sensitivity]);
   useEffect(() => { geminiRef.current = new GeminiService(); }, []);
+
+  // Screen Wake Lock implementation for Android
+  const requestWakeLock = async () => {
+    if ('wakeLock' in navigator) {
+      try {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        console.log('Screen Wake Lock is active');
+      } catch (err) {
+        console.error(`${err.name}, ${err.message}`);
+      }
+    }
+  };
+
+  const releaseWakeLock = () => {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release();
+      wakeLockRef.current = null;
+    }
+  };
 
   // Mic Visualization Loop
   useEffect(() => {
@@ -131,6 +158,10 @@ const App: React.FC = () => {
       }
       return;
     }
+    if (data.type === 'PARENT_VIDEO_STATUS') {
+      setParentVideoVisible(data.enabled);
+      return;
+    }
     if (data.noiseLevel !== undefined) {
       setStatus(data);
     }
@@ -156,39 +187,28 @@ const App: React.FC = () => {
   };
 
   const resetStation = () => {
-    // Stop all media tracks
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(t => t.stop());
-      localStreamRef.current = null;
-    }
-    if (localMicStreamRef.current) {
-      localMicStreamRef.current.getTracks().forEach(t => t.stop());
-      localMicStreamRef.current = null;
-    }
-    if (remoteStreamRef.current) {
-      remoteStreamRef.current.getTracks().forEach(t => t.stop());
-      remoteStreamRef.current = null;
-    }
+    releaseWakeLock();
+    if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
+    if (localMicStreamRef.current) localMicStreamRef.current.getTracks().forEach(t => t.stop());
+    if (remoteStreamRef.current) remoteStreamRef.current.getTracks().forEach(t => t.stop());
 
-    // Close Peer connections
-    if (activeCallRef.current) {
-      activeCallRef.current.close();
-      activeCallRef.current = null;
-    }
-    if (dataConnRef.current) {
-      dataConnRef.current.close();
-      dataConnRef.current = null;
-    }
-    if (peerRef.current) {
-      peerRef.current.destroy();
-      peerRef.current = null;
-    }
+    if (activeCallRef.current) activeCallRef.current.close();
+    if (dataConnRef.current) dataConnRef.current.close();
+    if (peerRef.current) peerRef.current.destroy();
 
-    // Reset local state
+    peerRef.current = null;
+    localStreamRef.current = null;
+    localMicStreamRef.current = null;
+    remoteStreamRef.current = null;
+    activeCallRef.current = null;
+    dataConnRef.current = null;
+
     setPeerId('');
     setPeerConnected(false);
     setIsLive(false);
     setStealthMode(false);
+    setParentCameraEnabled(false);
+    setParentVideoVisible(false);
     setStatus({
       isCrying: false,
       noiseLevel: 0,
@@ -232,9 +252,14 @@ const App: React.FC = () => {
           remoteStreamRef.current = s;
           if (mode === 'PARENT_STATION' && remoteVideoRef.current) {
             remoteVideoRef.current.srcObject = s;
-          } else if (mode === 'BABY_STATION' && babyIncomingAudioRef.current) {
-            babyIncomingAudioRef.current.srcObject = s;
-            if (audioUnlockedRef.current) babyIncomingAudioRef.current.play().catch(() => {});
+          } else if (mode === 'BABY_STATION') {
+             if (babyIncomingAudioRef.current) {
+               babyIncomingAudioRef.current.srcObject = s;
+               if (audioUnlockedRef.current) babyIncomingAudioRef.current.play().catch(() => {});
+             }
+             if (babyIncomingVideoRef.current) {
+               babyIncomingVideoRef.current.srcObject = s;
+             }
           }
           setPeerConnected(true);
         });
@@ -273,6 +298,7 @@ const App: React.FC = () => {
       
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLive(true);
+      requestWakeLock(); // Prevent Android sleeping while monitoring
       
       if (activeCallRef.current && activeCallRef.current.peerConnection) {
         const senders = activeCallRef.current.peerConnection.getSenders();
@@ -312,7 +338,6 @@ const App: React.FC = () => {
       }, NOISE_POLL_INTERVAL);
     } catch (e) { 
       setStreamError("Access denied."); 
-      console.error("Monitor Start Error:", e);
     }
   };
 
@@ -340,18 +365,23 @@ const App: React.FC = () => {
       conn.on('open', () => setPeerConnected(true));
       conn.on('data', handleData);
       
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      localMicStreamRef.current = micStream;
-      micStream.getAudioTracks().forEach(t => t.enabled = false);
+      const constraints = { audio: true, video: parentCameraEnabled };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      localMicStreamRef.current = stream;
+      requestWakeLock(); // Prevent Android sleeping while observing
+      
+      stream.getAudioTracks().forEach(t => t.enabled = false);
+      
+      let videoTrack = parentCameraEnabled ? stream.getVideoTracks()[0] : createBlankVideoTrack();
       
       if (!audioContextRef.current) audioContextRef.current = new AudioContext();
-      const source = audioContextRef.current.createMediaStreamSource(micStream);
+      const source = audioContextRef.current.createMediaStreamSource(stream);
       const analyser = audioContextRef.current.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
       localMicAnalyserRef.current = analyser;
 
-      const call = peerRef.current.call(targetPeerId, new MediaStream([...micStream.getAudioTracks(), createBlankVideoTrack()]));
+      const call = peerRef.current.call(targetPeerId, new MediaStream([...stream.getAudioTracks(), videoTrack]));
       activeCallRef.current = call;
       call.on('stream', (s: MediaStream) => {
         remoteStreamRef.current = s;
@@ -373,6 +403,41 @@ const App: React.FC = () => {
     }
     if (dataConnRef.current?.open) {
       dataConnRef.current.send({ type: 'PARENT_TALK_STATUS', isTalking: enabled });
+    }
+  };
+
+  const toggleParentCamera = async () => {
+    const newState = !parentCameraEnabled;
+    setParentCameraEnabled(newState);
+    
+    if (dataConnRef.current?.open) {
+      dataConnRef.current.send({ type: 'PARENT_VIDEO_STATUS', enabled: newState });
+    }
+
+    if (peerConnected && activeCallRef.current?.peerConnection) {
+       try {
+         let newTrack;
+         if (newState) {
+           if (localMicStreamRef.current?.getVideoTracks().length === 0) {
+             const vStream = await navigator.mediaDevices.getUserMedia({ video: true });
+             const vTrack = vStream.getVideoTracks()[0];
+             localMicStreamRef.current.addTrack(vTrack);
+             newTrack = vTrack;
+           } else {
+             newTrack = localMicStreamRef.current?.getVideoTracks()[0];
+           }
+         } else {
+           newTrack = createBlankVideoTrack();
+         }
+         
+         const senders = activeCallRef.current.peerConnection.getSenders();
+         const videoSender = senders.find((s: any) => s.track?.kind === 'video');
+         if (videoSender && newTrack) {
+           videoSender.replaceTrack(newTrack);
+         }
+       } catch (err) {
+         console.error("Camera Toggle Error:", err);
+       }
     }
   };
 
@@ -410,24 +475,28 @@ const App: React.FC = () => {
 
   if (mode === 'ROLE_SELECTION') {
     return (
-      <div className="min-h-screen w-full bg-[#020617] flex flex-col items-center justify-center p-6 text-white text-center">
+      <div className="min-h-screen w-full bg-[#000000] flex flex-col items-center justify-center p-6 text-white text-center">
         <div className="mb-10">
-          <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl">
-            <Baby className="w-7 h-7 text-white" />
+          <div className="w-16 h-16 bg-blue-600 rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-xl">
+            <Baby className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight mb-1">Lullaby AI</h1>
-          <p className="text-slate-400 text-xs font-medium">Smart monitoring simplified</p>
+          <h1 className="text-3xl font-bold tracking-tight mb-2">Lullaby AI</h1>
+          <p className="text-slate-400 text-xs font-medium uppercase tracking-[0.2em]">Android Station</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-md">
-          <button onClick={() => setMode('BABY_STATION')} className="bg-slate-900/80 border border-slate-800 p-6 rounded-[1.5rem] flex flex-col items-center gap-3 transition-all active:scale-95">
-            <Smartphone className="w-7 h-7 text-blue-500" />
-            <h3 className="text-base font-semibold uppercase tracking-tight">Baby Unit</h3>
-            <p className="text-slate-500 text-[9px] font-bold uppercase tracking-widest">Nursery Station</p>
+        <div className="grid grid-cols-1 gap-4 w-full max-w-sm">
+          <button onClick={() => setMode('BABY_STATION')} className="bg-slate-900/80 border border-slate-800 p-8 rounded-[2rem] flex flex-col items-center gap-4 transition-all active:scale-95 shadow-lg">
+            <Smartphone className="w-8 h-8 text-blue-500" />
+            <div className="text-left w-full">
+              <h3 className="text-lg font-bold uppercase tracking-tight">Baby Unit</h3>
+              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mt-1">Place in nursery</p>
+            </div>
           </button>
-          <button onClick={() => setMode('PARENT_STATION')} className="bg-slate-900/80 border border-slate-800 p-6 rounded-[1.5rem] flex flex-col items-center gap-3 transition-all active:scale-95">
-            <Monitor className="w-7 h-7 text-indigo-500" />
-            <h3 className="text-base font-semibold uppercase tracking-tight">Parent Unit</h3>
-            <p className="text-slate-500 text-[9px] font-bold uppercase tracking-widest">Remote Terminal</p>
+          <button onClick={() => setMode('PARENT_STATION')} className="bg-slate-900/80 border border-slate-800 p-8 rounded-[2rem] flex flex-col items-center gap-4 transition-all active:scale-95 shadow-lg">
+            <Monitor className="w-8 h-8 text-indigo-500" />
+            <div className="text-left w-full">
+              <h3 className="text-lg font-bold uppercase tracking-tight">Parent Unit</h3>
+              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mt-1">Carry with you</p>
+            </div>
           </button>
         </div>
       </div>
@@ -436,80 +505,87 @@ const App: React.FC = () => {
 
   if (mode === 'BABY_STATION') {
     return (
-      <div className={`fixed inset-0 ${stealthMode ? 'bg-black' : 'bg-[#020617]'} flex flex-col text-white transition-colors duration-500`}>
+      <div className={`fixed inset-0 ${stealthMode ? 'bg-[#000000]' : 'bg-[#020617]'} flex flex-col text-white transition-colors duration-500 overflow-hidden`}>
         <audio ref={babyIncomingAudioRef} autoPlay playsInline muted={false} />
         {!isLive ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6">
             <div className="bg-slate-900/50 p-8 rounded-[2rem] border border-slate-800 mb-8 w-full max-w-xs text-center">
-              <span className="text-[9px] font-bold uppercase text-blue-500 mb-2 block tracking-widest">Connection Code</span>
-              <div className="text-4xl font-mono font-bold tracking-widest">{peerId || '-----'}</div>
+              <span className="text-[9px] font-bold uppercase text-blue-500 mb-2 block tracking-widest">Nursery Access Code</span>
+              <div className="text-5xl font-mono font-bold tracking-tighter text-white">{peerId || '-----'}</div>
             </div>
-            <button onClick={() => startNurseryMonitor()} className="bg-blue-600 px-8 py-4 rounded-xl font-semibold text-xs uppercase tracking-widest flex items-center gap-2 active:scale-95 shadow-lg">
-              <Power className="w-4 h-4" /> Start Broadcast
+            <button onClick={() => startNurseryMonitor()} className="bg-blue-600 w-full max-w-xs py-5 rounded-[1.5rem] font-bold text-sm uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 shadow-2xl">
+              <Power className="w-5 h-5" /> Start Monitor
             </button>
-            <button onClick={() => setMode('ROLE_SELECTION')} className="mt-8 text-slate-500 text-[10px] font-bold uppercase tracking-widest">Exit</button>
+            <button onClick={() => setMode('ROLE_SELECTION')} className="mt-8 text-slate-500 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2"><ChevronLeft className="w-3 h-3" /> Back to menu</button>
           </div>
         ) : (
           <div className="flex-1 relative overflow-hidden">
             <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${stealthMode ? 'opacity-0' : 'opacity-100'}`} />
             
+            <div className={`absolute top-16 right-4 w-36 h-48 rounded-[2rem] overflow-hidden border-2 border-white/20 bg-black shadow-2xl transition-all duration-700 ${parentVideoVisible && !stealthMode ? 'opacity-100 scale-100' : 'opacity-0 scale-50 pointer-events-none'}`}>
+               <video ref={babyIncomingVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end justify-center pb-2">
+                 <span className="text-[8px] font-bold uppercase tracking-widest text-white/80">Parent</span>
+               </div>
+            </div>
+
             {!audioUnlocked && !stealthMode && (
-              <div className="absolute inset-0 z-50 bg-[#020617]/95 flex flex-col items-center justify-center p-8 text-center">
-                <Volume2 className="w-12 h-12 text-blue-500 mb-4 animate-pulse" />
-                <h3 className="text-lg font-semibold mb-3 tracking-tight uppercase">Audio Input Locked</h3>
-                <p className="text-slate-400 text-xs mb-8 max-w-xs font-medium">Enable hardware speaker for remote talkback reception.</p>
-                <button onClick={unlockSpeaker} className="bg-blue-600 px-8 py-3 rounded-xl font-bold uppercase text-[9px] tracking-widest active:scale-95 shadow-lg">Enable Speaker</button>
+              <div className="absolute inset-0 z-50 bg-[#000000]/95 flex flex-col items-center justify-center p-8 text-center">
+                <div className="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center mb-6 animate-pulse">
+                  <Volume2 className="w-8 h-8 text-blue-500" />
+                </div>
+                <h3 className="text-xl font-bold mb-3 tracking-tight uppercase">Hardware Lock</h3>
+                <p className="text-slate-400 text-xs mb-10 max-w-[240px] leading-relaxed">Android requires manual activation to receive parent talkback audio.</p>
+                <button onClick={unlockSpeaker} className="bg-blue-600 px-10 py-4 rounded-[1.5rem] font-bold uppercase text-[10px] tracking-widest active:scale-95 shadow-lg">Enable Hardware</button>
               </div>
             )}
 
             {isTalking && !stealthMode && (
-              <div className="absolute inset-0 bg-blue-600/10 backdrop-blur-sm flex items-center justify-center z-40">
-                <div className="bg-blue-600 px-6 py-4 rounded-full flex items-center gap-3 shadow-xl animate-pulse border border-white/10">
-                  <Mic className="w-5 h-5" />
-                  <span className="font-bold uppercase tracking-widest text-[9px]">Parent Talking...</span>
+              <div className="absolute inset-0 bg-blue-600/20 backdrop-blur-md flex items-center justify-center z-40">
+                <div className="bg-blue-600 px-8 py-5 rounded-[2rem] flex items-center gap-4 shadow-2xl animate-bounce border border-white/20">
+                  <Mic className="w-6 h-6" />
+                  <span className="font-bold uppercase tracking-widest text-[10px]">Parent Incoming</span>
                 </div>
               </div>
             )}
 
-            <div className={`absolute top-4 left-4 flex flex-col gap-2 z-20 transition-opacity ${stealthMode ? 'opacity-10' : 'opacity-100'}`}>
-              <div className="bg-red-600 px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider flex items-center gap-2">
-                <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" /> Broadcast
+            <div className={`absolute top-12 left-4 flex flex-col gap-2 z-20 transition-opacity ${stealthMode ? 'opacity-10' : 'opacity-100'}`}>
+              <div className="bg-red-600 px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 shadow-lg">
+                <div className="w-2 h-2 bg-white rounded-full animate-pulse" /> Live
               </div>
-              <div className="bg-slate-900/80 backdrop-blur px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider flex items-center gap-2">
-                <Activity className="w-2.5 h-2.5 text-blue-500" /> {status.noiseLevel}% Noise
+              <div className="bg-slate-900/80 backdrop-blur-xl px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 shadow-lg">
+                <Activity className="w-3 h-3 text-blue-500" /> {status.noiseLevel}%
               </div>
             </div>
 
-            {/* Added Back Button for Baby Station Live View */}
-            <div className={`absolute top-4 right-4 z-30 transition-opacity ${stealthMode ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-              <button 
-                onClick={resetStation}
-                className="bg-slate-900/60 backdrop-blur p-2.5 rounded-xl border border-white/10 text-white transition-all active:scale-90 hover:bg-slate-800"
-                title="Return to Menu"
-              >
-                <LogOut className="w-5 h-5" />
+            <div className={`absolute top-12 right-4 z-30 transition-opacity ${stealthMode ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+              <button onClick={resetStation} className="bg-slate-900/80 backdrop-blur-xl p-3.5 rounded-2xl border border-white/10 text-white active:scale-90 shadow-lg">
+                <LogOut className="w-6 h-6" />
               </button>
             </div>
 
-            <div className={`absolute bottom-6 inset-x-0 flex items-center justify-center gap-3 transition-all ${stealthMode ? 'opacity-0 translate-y-10 pointer-events-none' : 'opacity-100'}`}>
-              <div className="bg-slate-900/90 backdrop-blur-2xl p-3 rounded-[2rem] flex items-center gap-2 border border-slate-800 shadow-2xl">
-                <button onClick={toggleBabyMic} className={`p-4 rounded-xl transition-colors ${babyMicEnabled ? 'bg-slate-800' : 'bg-red-600'}`}>
-                  {babyMicEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+            <div className={`absolute bottom-10 inset-x-0 flex items-center justify-center gap-4 transition-all ${stealthMode ? 'opacity-0 translate-y-10 pointer-events-none' : 'opacity-100'}`}>
+              <div className="bg-slate-900/90 backdrop-blur-3xl p-4 rounded-[2.5rem] flex items-center gap-3 border border-slate-800 shadow-2xl">
+                <button onClick={toggleBabyMic} className={`p-5 rounded-2xl transition-all active:scale-90 ${babyMicEnabled ? 'bg-slate-800' : 'bg-red-600'}`}>
+                  {babyMicEnabled ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
                 </button>
-                <button onClick={flipCamera} className="p-4 rounded-xl bg-slate-800">
-                  <SwitchCamera className="w-5 h-5" />
+                <button onClick={flipCamera} className="p-5 rounded-2xl bg-slate-800 active:scale-90">
+                  <SwitchCamera className="w-6 h-6" />
                 </button>
-                <button onClick={() => setStealthMode(true)} className="px-6 py-4 rounded-xl bg-blue-600 font-bold text-[9px] uppercase tracking-widest flex items-center gap-2">
-                  <Lock className="w-3 h-3" /> Nursery Mode
+                <button onClick={() => setStealthMode(true)} className="px-8 py-5 rounded-2xl bg-blue-600 font-bold text-[10px] uppercase tracking-widest flex items-center gap-2 active:scale-95">
+                  <Lock className="w-4 h-4" /> Stealth
                 </button>
               </div>
             </div>
             
             {stealthMode && (
-              <div className="absolute inset-0 bg-black flex flex-col items-center justify-center cursor-pointer transition-opacity duration-1000" onDoubleClick={() => setStealthMode(false)}>
-                <p className="text-slate-900 font-bold uppercase tracking-[0.4em] text-center text-[9px] select-none">
-                  SECURE<br/><span className="text-[7px] opacity-20 mt-3 block">DOUBLE TAP TO RESTORE</span>
-                </p>
+              <div className="absolute inset-0 bg-[#000000] flex flex-col items-center justify-center cursor-pointer transition-opacity duration-1000" onDoubleClick={() => setStealthMode(false)}>
+                <div className="opacity-10 flex flex-col items-center">
+                   <Lock className="w-12 h-12 mb-6" />
+                   <p className="text-white font-bold uppercase tracking-[0.5em] text-center text-[10px] select-none">
+                     SECURE MONITORING<br/><span className="text-[7px] mt-4 block">DOUBLE TAP TO RESTORE</span>
+                   </p>
+                </div>
               </div>
             )}
           </div>
@@ -519,36 +595,36 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#020617] flex flex-col p-4 md:p-6 text-white">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4 h-12 shrink-0 z-10">
-        <div className="flex items-center gap-2">
-          <button onClick={resetStation} className="p-2 hover:bg-slate-900 rounded-lg transition-all">
-            <ChevronLeft className="w-5 h-5 text-slate-400" />
+    <div className="min-h-screen bg-[#000000] flex flex-col p-4 md:p-6 text-white overflow-hidden">
+      {/* Native-style Mobile Header */}
+      <div className="flex items-center justify-between mb-6 h-14 shrink-0 z-10 safe-top">
+        <div className="flex items-center gap-3">
+          <button onClick={resetStation} className="p-2.5 bg-slate-900/50 rounded-2xl border border-slate-800 transition-all active:scale-90">
+            <ChevronLeft className="w-6 h-6 text-slate-400" />
           </button>
-          <div>
-            <h2 className="text-xs font-semibold uppercase tracking-tight">Parent Hub</h2>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <div className={`w-1 h-1 rounded-full ${peerConnected ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
-              <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">
-                {peerConnected ? 'Live' : 'Signal Ready'}
+          <div className="flex flex-col">
+            <h2 className="text-sm font-bold uppercase tracking-tight leading-none mb-1">Station Hub</h2>
+            <div className="flex items-center gap-2">
+              <div className={`w-1.5 h-1.5 rounded-full ${peerConnected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-slate-700'}`} />
+              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+                {peerConnected ? 'Active Link' : 'Standby'}
               </span>
             </div>
           </div>
         </div>
         
-        <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
-          <button onClick={() => setParentView('FEED')} className={`px-4 py-1.5 rounded-lg text-[9px] font-bold transition-all uppercase tracking-widest ${parentView === 'FEED' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>Monitor</button>
-          <button onClick={() => setParentView('AI_INSIGHTS')} className={`px-4 py-1.5 rounded-lg text-[9px] font-bold transition-all uppercase tracking-widest ${parentView === 'AI_INSIGHTS' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>Insights</button>
+        <div className="flex bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800 backdrop-blur-xl">
+          <button onClick={() => setParentView('FEED')} className={`px-5 py-2.5 rounded-xl text-[10px] font-bold transition-all uppercase tracking-widest ${parentView === 'FEED' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Live</button>
+          <button onClick={() => setParentView('AI_INSIGHTS')} className={`px-5 py-2.5 rounded-xl text-[10px] font-bold transition-all uppercase tracking-widest ${parentView === 'AI_INSIGHTS' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>AI</button>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0 overflow-hidden">
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0 overflow-hidden mb-safe">
         {parentView === 'FEED' ? (
           <div className="flex-1 flex flex-col gap-4">
-            {/* Monitor Window */}
-            <div className={`flex-1 bg-black rounded-[1.5rem] border overflow-hidden relative transition-all duration-700 ${status.isCrying ? 'border-red-500 ring-4 ring-red-500/10' : 'border-slate-800'}`}>
+            {/* Monitor Window Optimized for OLED */}
+            <div className={`flex-1 bg-[#000000] rounded-[2.5rem] border overflow-hidden relative transition-all duration-700 ${status.isCrying ? 'border-red-600 ring-8 ring-red-600/10' : 'border-slate-800'}`}>
               <video 
                 ref={remoteVideoRef} 
                 autoPlay 
@@ -558,107 +634,122 @@ const App: React.FC = () => {
               />
               
               {peerConnected && isMuted && (
-                <div onClick={() => setIsMuted(false)} className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-[2px] cursor-pointer z-20">
-                  <div className="bg-blue-600 p-5 rounded-2xl mb-3 shadow-lg active:scale-90"><VolumeX className="w-7 h-7 text-white" /></div>
-                  <p className="text-white font-bold uppercase tracking-widest text-[8px] opacity-70">Tap for nursery sound</p>
+                <div onClick={() => setIsMuted(false)} className="absolute inset-0 flex flex-col items-center justify-center bg-[#000000]/70 backdrop-blur-md cursor-pointer z-20">
+                  <div className="bg-blue-600 p-6 rounded-[2rem] mb-4 shadow-2xl active:scale-90"><VolumeX className="w-8 h-8 text-white" /></div>
+                  <p className="text-white font-bold uppercase tracking-[0.2em] text-[10px] opacity-80">Enable Audio Stream</p>
                 </div>
               )}
               
               {!peerConnected && !isConnecting && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-[#020617]/98 text-center z-30">
-                  <Signal className="w-8 h-8 text-blue-500/20 mb-4" />
-                  <h3 className="text-sm font-semibold mb-6 uppercase tracking-tight">Synchronize Unit</h3>
-                  <div className="w-full max-w-xs flex flex-col gap-3">
-                    <input type="text" maxLength={5} placeholder="00000" value={targetPeerId} onChange={(e)=>setTargetPeerId(e.target.value.replace(/\D/g,''))} className="bg-slate-900/50 border border-slate-800 rounded-xl px-4 py-4 text-center text-2xl font-mono font-bold text-blue-500 outline-none" />
-                    <button onClick={linkToNursery} className="bg-blue-600 py-4 rounded-xl font-bold uppercase text-[9px] tracking-widest active:scale-95 shadow-md">
-                      Join Broadcast
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-8 bg-[#000000]/95 text-center z-30">
+                  <div className="w-20 h-20 bg-blue-600/10 rounded-[2rem] flex items-center justify-center mb-8">
+                     <Signal className="w-10 h-10 text-blue-500" />
+                  </div>
+                  <h3 className="text-lg font-bold mb-4 uppercase tracking-tight">Sync Hardware</h3>
+                  <div className="w-full max-w-xs flex flex-col gap-4">
+                    <input type="text" maxLength={5} placeholder="00000" value={targetPeerId} onChange={(e)=>setTargetPeerId(e.target.value.replace(/\D/g,''))} className="bg-slate-900/50 border border-slate-800 rounded-2xl px-6 py-5 text-center text-4xl font-mono font-bold text-blue-500 outline-none focus:border-blue-500 transition-colors" />
+                    <button onClick={linkToNursery} className="bg-blue-600 py-5 rounded-2xl font-bold uppercase text-[11px] tracking-widest active:scale-95 shadow-xl transition-transform">
+                      Establish Secure Link
                     </button>
                   </div>
                 </div>
               )}
 
               {peerConnected && (
-                <div className="absolute top-4 right-4 flex gap-2 z-40">
-                  <div className={`p-2 rounded-lg backdrop-blur bg-slate-900/40 border border-white/5 flex items-center gap-2 ${isMuted ? 'text-red-400' : 'text-green-400'}`}>
-                    {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                    <span className="text-[7px] font-bold uppercase tracking-tighter">{isMuted ? 'Silent' : 'Audible'}</span>
-                  </div>
-                  <button onClick={() => setIsMuted(!isMuted)} className={`p-2.5 rounded-lg backdrop-blur transition-all border ${isMuted ? 'bg-red-600 border-red-400' : 'bg-slate-900/60 border-white/10'}`}>
-                    {isMuted ? <Volume2 className="w-4 h-4 text-white" /> : <VolumeX className="w-4 h-4 text-white" />}
+                <div className="absolute top-6 right-6 flex gap-3 z-40">
+                  <button onClick={() => setIsMuted(!isMuted)} className={`p-4 rounded-2xl backdrop-blur-3xl transition-all border shadow-2xl active:scale-90 ${isMuted ? 'bg-red-600 border-red-400' : 'bg-slate-900/80 border-white/20'}`}>
+                    {isMuted ? <VolumeX className="w-5 h-5 text-white" /> : <Volume2 className="w-5 h-5 text-white" />}
                   </button>
                 </div>
               )}
             </div>
 
-            {/* Parent Talkback Bar */}
-            <div className="h-24 shrink-0">
+            {/* Mobile-Native Action Bar */}
+            <div className="h-28 flex gap-4 shrink-0 pb-safe">
               <button 
                 onMouseDown={() => setParentMic(true)} onMouseUp={() => setParentMic(false)} onMouseLeave={() => setParentMic(false)}
                 onTouchStart={(e) => { e.preventDefault(); setParentMic(true); }} onTouchEnd={(e) => { e.preventDefault(); setParentMic(false); }}
-                className={`w-full h-full rounded-[1.5rem] border transition-all flex items-center justify-center gap-6 active:scale-[0.98] ${isTalking ? 'bg-blue-600 border-blue-400 shadow-lg' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
+                className={`flex-[2.5] h-full rounded-[2.5rem] border transition-all flex items-center justify-center gap-5 active:scale-[0.97] ${isTalking ? 'bg-blue-600 border-blue-400 shadow-[0_20px_40px_rgba(37,99,235,0.3)]' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
               >
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${isTalking ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-500'}`}>
-                  {isTalking ? <Mic className="w-6 h-6 animate-pulse" /> : <MicOff className="w-6 h-6" />}
+                <div className={`w-14 h-14 rounded-3xl flex items-center justify-center transition-all shadow-lg ${isTalking ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-500'}`}>
+                  {isTalking ? <Mic className="w-7 h-7 animate-pulse" /> : <MicOff className="w-7 h-7" />}
                 </div>
                 <div className="text-left">
-                  <p className={`text-[8px] font-bold uppercase tracking-widest mb-1 ${isTalking ? 'text-blue-100' : 'text-slate-500'}`}>{isTalking ? 'Broadcasting now' : 'Hold to Talk'}</p>
-                  <h3 className="text-lg font-semibold uppercase tracking-tight leading-none">Parent Link</h3>
+                  <p className={`text-[8px] font-bold uppercase tracking-[0.2em] mb-1 ${isTalking ? 'text-blue-100' : 'text-slate-500'}`}>{isTalking ? 'Transmission' : 'Press & Hold'}</p>
+                  <h3 className="text-xl font-bold uppercase tracking-tight leading-none">Talk Link</h3>
                 </div>
+              </button>
+
+              <button 
+                onClick={toggleParentCamera}
+                className={`flex-1 h-full rounded-[2.5rem] border transition-all flex flex-col items-center justify-center gap-2 active:scale-[0.97] ${parentCameraEnabled ? 'bg-indigo-600 border-indigo-400 shadow-xl' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
+              >
+                {parentCameraEnabled ? <Video className="w-7 h-7" /> : <VideoOff className="w-7 h-7 text-slate-500" />}
+                <span className={`text-[8px] font-bold uppercase tracking-widest ${parentCameraEnabled ? 'text-indigo-100' : 'text-slate-500'}`}>
+                  {parentCameraEnabled ? 'On' : 'Off'}
+                </span>
               </button>
             </div>
           </div>
         ) : (
-          <div className="flex-1 bg-slate-900/20 backdrop-blur rounded-[2rem] border border-slate-800 p-4 flex flex-col lg:flex-row gap-4 overflow-hidden">
-            <div className="flex-[1.2] overflow-y-auto custom-scrollbar pr-2">
-              <div className="bg-slate-900/40 p-8 rounded-[1.5rem] text-center border border-slate-800">
-                <BrainCircuit className="w-10 h-10 text-blue-500 mx-auto mb-4" />
-                <h3 className="text-base font-semibold mb-2">Diagnostic Hub</h3>
-                <p className="text-slate-500 text-[10px] mb-8 font-medium">Upload nursery data for pediatric AI synthesis.</p>
-                <input type="file" onChange={onFileUpload} className="hidden" id="file-hub-diag-v2" />
-                <label htmlFor="file-hub-diag-v2" className="bg-blue-600 px-6 py-3 rounded-xl font-bold uppercase text-[8px] tracking-widest flex items-center gap-2 mx-auto cursor-pointer active:scale-95 inline-flex shadow-lg">
-                  <Upload className="w-3 h-3" /> {isAnalyzing ? 'Processing...' : 'Upload Data'}
+          <div className="flex-1 bg-slate-900/20 backdrop-blur-xl rounded-[2.5rem] border border-slate-800 p-5 flex flex-col lg:flex-row gap-5 overflow-hidden">
+            <div className="flex-[1.2] overflow-y-auto custom-scrollbar pr-2 pb-safe">
+              <div className="bg-slate-900/40 p-10 rounded-[2rem] text-center border border-slate-800 shadow-inner">
+                <div className="w-16 h-16 bg-blue-600/10 rounded-[1.5rem] flex items-center justify-center mx-auto mb-6">
+                   <BrainCircuit className="w-8 h-8 text-blue-500" />
+                </div>
+                <h3 className="text-lg font-bold mb-3 tracking-tight">AI Diagnostic</h3>
+                <p className="text-slate-500 text-[11px] mb-10 font-medium leading-relaxed">Upload baby logs or photos for pediatric-grade synthesis.</p>
+                <input type="file" onChange={onFileUpload} className="hidden" id="file-hub-diag-v3" />
+                <label htmlFor="file-hub-diag-v3" className="bg-blue-600 w-full py-5 rounded-[1.5rem] font-bold uppercase text-[10px] tracking-widest flex items-center justify-center gap-3 cursor-pointer active:scale-95 shadow-xl transition-all">
+                  <Upload className="w-4 h-4" /> {isAnalyzing ? 'Syncing...' : 'Upload Log'}
                 </label>
               </div>
               
               {analysisResult && (
-                <div className="mt-4 space-y-4">
-                  <div className="bg-slate-900/60 p-6 rounded-[1.5rem] border border-slate-800">
-                    <h4 className="text-[8px] font-bold text-blue-500 uppercase tracking-widest mb-3 flex items-center gap-2 font-mono"><Sparkles className="w-3 h-3" /> Insights</h4>
-                    <p className="text-slate-200 text-xs leading-relaxed font-medium">{analysisResult.summary}</p>
+                <div className="mt-6 space-y-6">
+                  <div className="bg-slate-900/60 p-8 rounded-[2rem] border border-slate-800 shadow-lg">
+                    <h4 className="text-[10px] font-bold text-blue-500 uppercase tracking-[0.2em] mb-4 flex items-center gap-3"><Sparkles className="w-4 h-4" /> System Insight</h4>
+                    <p className="text-slate-200 text-sm leading-relaxed font-medium">{analysisResult.summary}</p>
                   </div>
                 </div>
               )}
             </div>
             
-            <div className="flex-1 bg-slate-950/80 rounded-[1.5rem] border border-slate-800 flex flex-col overflow-hidden">
-               <div className="p-4 border-b border-slate-800 flex items-center gap-2 bg-slate-900/40">
-                 <MessageSquare className="w-4 h-4 text-blue-500" />
-                 <span className="text-[9px] font-bold uppercase text-slate-400 tracking-widest">AI Consultant</span>
+            <div className="flex-1 bg-black rounded-[2rem] border border-slate-800 flex flex-col overflow-hidden shadow-2xl mb-safe">
+               <div className="p-5 border-b border-slate-800 flex items-center gap-3 bg-slate-900/40">
+                 <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Assistant Node</span>
                </div>
-               <div className="flex-1 p-4 space-y-4 overflow-y-auto custom-scrollbar">
-                 {chatHistory.length === 0 && <p className="text-center mt-12 text-slate-700 text-[9px] uppercase font-bold tracking-[0.2em] px-4 leading-relaxed">Initialization Required</p>}
+               <div className="flex-1 p-5 space-y-5 overflow-y-auto custom-scrollbar">
+                 {chatHistory.length === 0 && (
+                   <div className="mt-20 flex flex-col items-center opacity-20">
+                     <MessageSquare className="w-12 h-12 mb-4" />
+                     <p className="text-center text-[10px] uppercase font-bold tracking-[0.3em]">Standby</p>
+                   </div>
+                 )}
                  {chatHistory.map((chat, idx) => (
                    <div key={idx} className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                     <div className={`max-w-[85%] p-4 rounded-xl text-xs font-medium ${chat.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-300 border border-slate-800'}`}>{chat.text}</div>
+                     <div className={`max-w-[90%] p-5 rounded-[1.5rem] text-sm font-medium shadow-lg ${chat.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-300 border border-slate-800'}`}>{chat.text}</div>
                    </div>
                  ))}
                </div>
-               <div className="p-4 bg-slate-900 border-t border-slate-800 flex gap-2">
-                 <input type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onQuestionAsk()} placeholder="Query Assistant..." className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-[11px] outline-none focus:border-blue-600" />
-                 <button onClick={onQuestionAsk} disabled={!chatMessage.trim() || isAsking} className="p-3 bg-blue-600 rounded-xl disabled:opacity-30 active:scale-95"><Send className="w-4 h-4" /></button>
+               <div className="p-5 bg-slate-900 border-t border-slate-800 flex gap-3 safe-bottom">
+                 <input type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onQuestionAsk()} placeholder="Query node..." className="flex-1 bg-black border border-slate-800 rounded-2xl px-5 py-4 text-sm outline-none focus:border-blue-600 transition-colors" />
+                 <button onClick={onQuestionAsk} disabled={!chatMessage.trim() || isAsking} className="p-4 bg-blue-600 rounded-2xl disabled:opacity-30 active:scale-95 shadow-xl"><Send className="w-5 h-5" /></button>
                </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Mobile Cry Alert Footer */}
-      <div className={`mt-4 lg:hidden px-5 py-3 rounded-2xl border flex items-center justify-between transition-all duration-700 ${status.isCrying ? 'bg-red-500/10 border-red-500 text-red-500 shadow-md animate-pulse' : 'bg-slate-900/50 border-slate-800 text-slate-500 opacity-60'}`}>
-        <div className="flex items-center gap-3">
-          <Baby className={`w-4 h-4 ${status.isCrying ? 'animate-bounce' : ''}`} />
-          <span className="text-[9px] font-bold uppercase tracking-[0.1em]">{status.statusMessage}</span>
+      {/* Persistent Mobile Status Bar */}
+      <div className={`mt-4 lg:hidden px-6 py-4 rounded-[2rem] border flex items-center justify-between transition-all duration-1000 ${status.isCrying ? 'bg-red-600 text-white border-white animate-alert-border' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
+        <div className="flex items-center gap-4">
+          <Baby className={`w-5 h-5 ${status.isCrying ? 'animate-bounce' : ''}`} />
+          <span className="text-[10px] font-bold uppercase tracking-[0.15em]">{status.statusMessage}</span>
         </div>
-        <div className="text-[9px] font-bold font-mono">{status.noiseLevel}%</div>
+        <div className="text-[10px] font-bold font-mono tracking-tighter">{status.noiseLevel}% SENS</div>
       </div>
     </div>
   );
