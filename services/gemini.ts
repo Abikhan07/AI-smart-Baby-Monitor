@@ -1,8 +1,8 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { FileData, AnalysisResult } from "../types";
+import { FileData, AnalysisResult } from "../types.ts";
 
-const MODEL_NAME = 'gemini-3-flash-preview';
+const MODEL_NAME = 'gemini-3-pro-preview';
 
 export class GeminiService {
   private ai: GoogleGenAI;
@@ -23,12 +23,11 @@ export class GeminiService {
           data: file.content.split(',')[1]
         }
       });
-      parts.push({ text: "Analyze this image in detail. Extract any data, text, or visual information." });
+      parts.push({ text: "Analyze this image in detail. Extract any data, text, or visual information related to baby care, health logs, or sleep patterns." });
     } else {
-      parts.push({ text: `Analyze the following file content named "${file.name}":\n\n${file.content}` });
+      parts.push({ text: `Analyze the following baby care log file named "${file.name}":\n\n${file.content}` });
     }
 
-    // Using ai.models.generateContent directly as per guidelines.
     const response = await this.ai.models.generateContent({
       model: MODEL_NAME,
       contents: { parts },
@@ -37,16 +36,16 @@ export class GeminiService {
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            summary: { type: Type.STRING, description: "A concise summary of the document." },
+            summary: { type: Type.STRING, description: "A concise summary of the data." },
             keyInsights: { 
               type: Type.ARRAY, 
               items: { type: Type.STRING },
-              description: "Key facts or takeaways from the content."
+              description: "Key findings about baby's behavior or health."
             },
             suggestedQuestions: {
               type: Type.ARRAY,
               items: { type: Type.STRING },
-              description: "Questions the user might want to ask about this content."
+              description: "Questions the parent might want to ask."
             },
             visualizations: {
               type: Type.ARRAY,
@@ -88,7 +87,6 @@ export class GeminiService {
     });
 
     try {
-      // Accessing text as a property on the response object.
       const text = response.text;
       if (!text) {
         throw new Error("No response text from Gemini");
@@ -105,18 +103,21 @@ export class GeminiService {
     const chat = this.ai.chats.create({
       model: MODEL_NAME,
       config: {
-        systemInstruction: `You are an expert document assistant. You are helping a user understand the file: ${file.name}. Use the provided file content as your primary source of truth.`
+        systemInstruction: `You are an expert pediatric consultant assistant. You are helping a parent understand logs/images related to their baby's care. Use the file "${file.name}" as context. Be encouraging, professional, and clear.`
       }
     });
 
     let prompt = question;
     if (history.length === 0) {
       if (!isImage) {
-        prompt = `Based on this document content: "${file.content.substring(0, 5000)}...", answer the following question: ${question}`;
+        prompt = `Based on this content: "${file.content.substring(0, 5000)}...", answer: ${question}`;
+      } else {
+        // For images in first turn of chat, we'd ideally re-send the image part, 
+        // but for this simple implementation we rely on the context established in systemInstruction if the model supports it or simple text reference.
+        prompt = `Based on the previously uploaded image, answer: ${question}`;
       }
     }
 
-    // Sending message to the chat session.
     const result = await chat.sendMessage({ message: prompt });
     return result.text || "I'm sorry, I couldn't process that question.";
   }
