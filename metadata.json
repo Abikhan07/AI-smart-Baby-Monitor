@@ -1,0 +1,8 @@
+{
+  "name": " AI - Smart Baby Monitor",
+  "description": "A sophisticated AI-powered baby monitor with real-time cry detection, smart lullabies, and remote monitoring.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
