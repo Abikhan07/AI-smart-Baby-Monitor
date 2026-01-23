@@ -27,6 +27,8 @@ import {
   VideoOff,
   User
 } from 'lucide-react';
+// Capacitor Native Imports
+import { KeepAwake } from '@capacitor-community/keep-awake';
 import { AppMode, BabyStatus, FileData, AnalysisResult } from './types.ts';
 import { GeminiService } from './services/gemini.ts';
 
@@ -110,19 +112,41 @@ const App: React.FC = () => {
   useEffect(() => { sensitivityRef.current = sensitivity; }, [sensitivity]);
   useEffect(() => { geminiRef.current = new GeminiService(); }, []);
 
-  // Screen Wake Lock implementation for Android
+  // Screen Wake Lock implementation for Android (Robust native-bridge version)
   const requestWakeLock = async () => {
+    // 1. Try Native Capacitor Plugin (Safest for Android)
+    try {
+      if (KeepAwake) {
+        await KeepAwake.keepAwake();
+        console.log('Native Android Wake Lock enabled');
+        return;
+      }
+    } catch (e) {
+      console.warn('Native KeepAwake plugin failed, falling back to Web API', e);
+    }
+
+    // 2. Fallback to Web Wake Lock API (If native fails or in browser)
     if ('wakeLock' in navigator) {
       try {
         wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-        console.log('Screen Wake Lock is active');
-      } catch (err) {
-        console.error(`${err.name}, ${err.message}`);
+        console.log('Web Screen Wake Lock is active');
+      } catch (err: any) {
+        if (err.name === 'NotAllowedError') {
+          console.error('WakeLock disallowed by policy. Ensure app is top-level and over HTTPS/Capacitor.');
+        } else {
+          console.error(`WakeLock error: ${err.name}, ${err.message}`);
+        }
       }
     }
   };
 
-  const releaseWakeLock = () => {
+  const releaseWakeLock = async () => {
+    // 1. Release Native
+    try {
+      if (KeepAwake) await KeepAwake.allowSleep();
+    } catch (e) { /* ignore */ }
+
+    // 2. Release Web
     if (wakeLockRef.current) {
       wakeLockRef.current.release();
       wakeLockRef.current = null;
@@ -298,7 +322,7 @@ const App: React.FC = () => {
       
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLive(true);
-      requestWakeLock(); // Prevent Android sleeping while monitoring
+      requestWakeLock(); // Attempt to prevent Android sleeping
       
       if (activeCallRef.current && activeCallRef.current.peerConnection) {
         const senders = activeCallRef.current.peerConnection.getSenders();
@@ -368,7 +392,7 @@ const App: React.FC = () => {
       const constraints = { audio: true, video: parentCameraEnabled };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       localMicStreamRef.current = stream;
-      requestWakeLock(); // Prevent Android sleeping while observing
+      requestWakeLock(); // Attempt to prevent Android sleeping
       
       stream.getAudioTracks().forEach(t => t.enabled = false);
       
@@ -483,7 +507,7 @@ const App: React.FC = () => {
           <h1 className="text-3xl font-bold tracking-tight mb-2">Lullaby AI</h1>
           <p className="text-slate-400 text-xs font-medium uppercase tracking-[0.2em]">Android Station</p>
         </div>
-        <div className="grid grid-cols-1 gap-4 w-full max-w-sm">
+        <div className="grid grid-cols-1 gap-4 w-full max-sm px-4">
           <button onClick={() => setMode('BABY_STATION')} className="bg-slate-900/80 border border-slate-800 p-8 rounded-[2rem] flex flex-col items-center gap-4 transition-all active:scale-95 shadow-lg">
             <Smartphone className="w-8 h-8 text-blue-500" />
             <div className="text-left w-full">
