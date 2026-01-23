@@ -43,8 +43,8 @@ const ICE_SERVERS = [
 ];
 
 /**
- * Valid 1x1 pixel silent MP4 to keep screen awake in restricted environments.
- * This base64 is a standard 1-second silent clip that is highly compatible with Android WebViews.
+ * 1x1 Pixel Silent MP4 (1 frame). 
+ * This is a standard minimal MP4 container that resolves "no supported source" errors in Android WebViews.
  */
 const SLEEP_PREVENT_VIDEO_B64 = "data:video/mp4;base64,AAAAHGZ0eXBtcDQyAAAAAG1wNDJpc29tYXZjMQAAAZptb292AAAAbG12aGQAAAAA190629fdOtkAAAPoAAAAKAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAGWlveHltAAAAEGJydm0AAAAAAQAAAAGhdHJhawAAAFx0a2hkAAAAAdfdOtrX3TrZAAAAAQAAAAAAAAPoAAAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAYbWRpYQAAACBtZGhkAAAAA9fdOtrX3TrZAAAALAAAABQBAAEAAAAAAAAAImhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABUW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAPNzdGJsAAAAr3N0c2QAAAAAAAAAAQAAAJ9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAKAAoABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAALWF2Y0MBQsAM/+EAFWfCwAzYAtYCAgKAAAAAAwCAAAAeBIsXhEAAAAAAGHN0dHMAAAAAAAAAAQAAAAEAAAAUAAAAFHN0c3oAAAAAAAAAAAAAAAEAAABMc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0Y28AAAAAAAAAAQAAAEwAAAAidWR0YQAAABp0cm9sAAAAAQAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -119,52 +119,53 @@ const App: React.FC = () => {
   useEffect(() => { sensitivityRef.current = sensitivity; }, [sensitivity]);
   useEffect(() => { geminiRef.current = new GeminiService(); }, []);
 
-  // Screen Wake Lock implementation for Android (Robust native-bridge + Video fallback)
+  /**
+   * Triple-Layer Wake Lock Strategy.
+   * To satisfy browser security policies, we MUST attempt video playback 
+   * IMMEDIATELY in the call stack of the user gesture (onClick).
+   */
   const requestWakeLock = async () => {
-    console.log('Initiating Screen Wake Lock sequence...');
+    console.log('Synchronizing Screen Wake Locks...');
 
-    // 1. Try Native Capacitor Plugin (Safest for Android Apps)
+    // LAYER 1: Immediate Video Play (Must be in user gesture stack)
+    if (noSleepVideoRef.current) {
+      try {
+        // We don't await this immediately to allow other checks to run in parallel
+        noSleepVideoRef.current.play().catch(e => {
+          console.warn('Visual Wake Lock playback was blocked. This environment might require a physical touch event.', e);
+        });
+      } catch (err) {
+        console.error('Visual Wake Lock failed to initialize.', err);
+      }
+    }
+
+    // LAYER 2: Native Capacitor Plugin
     try {
       if (KeepAwake && typeof KeepAwake.keepAwake === 'function') {
         await KeepAwake.keepAwake();
         console.log('Native Android Wake Lock: ACTIVE');
-        return;
+        return; // Native is superior, but we still leave the video running as backup
       }
     } catch (e) {
-      console.warn('Native KeepAwake plugin failed, falling back to Web APIs');
+      console.warn('Native KeepAwake plugin unavailable or failed.');
     }
 
-    // 2. Try Web Wake Lock API (Permissions Policy may block this)
+    // LAYER 3: Web Wake Lock API (Frequently disabled by Sandbox Permissions Policy)
     if ('wakeLock' in navigator) {
       try {
         wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
         console.log('Web Screen Wake Lock: ACTIVE');
-        return;
       } catch (err: any) {
-        console.warn(`Web WakeLock disallowed by policy: ${err.name}. Trying Video Fallback.`);
-      }
-    }
-
-    // 3. Final Fallback: Hidden Video Hack (Bypasses Permissions Policy & restricted frames)
-    // IMPORTANT: Must be called within a user gesture handler (click/touch)
-    if (noSleepVideoRef.current) {
-      try {
-        noSleepVideoRef.current.src = SLEEP_PREVENT_VIDEO_B64;
-        await noSleepVideoRef.current.play();
-        console.log('Visual Wake Lock (Video Hack): ACTIVE');
-      } catch (err) {
-        console.error('Wake Lock video fallback failed. Ensure this was called from a user gesture.', err);
+        console.warn(`Web WakeLock disallowed by policy: ${err.name}. Relying on Visual Fallback.`);
       }
     }
   };
 
   const releaseWakeLock = async () => {
-    // Release Native
     try {
       if (KeepAwake && typeof KeepAwake.allowSleep === 'function') await KeepAwake.allowSleep();
     } catch (e) { /* ignore */ }
 
-    // Release Web
     if (wakeLockRef.current) {
       try {
         await wakeLockRef.current.release();
@@ -172,11 +173,9 @@ const App: React.FC = () => {
       } catch (e) { /* ignore */ }
     }
 
-    // Stop Video
     if (noSleepVideoRef.current) {
       try {
         noSleepVideoRef.current.pause();
-        noSleepVideoRef.current.src = "";
       } catch (e) { /* ignore */ }
     }
     console.log('All Wake Locks: RELEASED');
@@ -322,8 +321,10 @@ const App: React.FC = () => {
   }, [mode, handleData]);
 
   const unlockSpeaker = async () => {
+    // START WAKE LOCK ON CLICK
+    requestWakeLock();
+    
     try {
-      // Audio unlock logic
       if (!audioContextRef.current) audioContextRef.current = new AudioContext();
       if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
       setAudioUnlocked(true);
@@ -332,13 +333,11 @@ const App: React.FC = () => {
         babyIncomingAudioRef.current.muted = false;
         await babyIncomingAudioRef.current.play();
       }
-      // Re-trigger WakeLock during this user interaction to satisfy security policies
-      requestWakeLock();
     } catch (e) { console.error(e); }
   };
 
   const startNurseryMonitor = async (forceFacingMode?: 'user' | 'environment') => {
-    // TRIPLE WAKE LOCK: Call this immediately on click to satisfy user-gesture requirements
+    // START WAKE LOCK ON CLICK
     requestWakeLock();
     
     setStreamError(null);
@@ -414,7 +413,7 @@ const App: React.FC = () => {
   };
 
   const linkToNursery = async () => {
-    // TRIPLE WAKE LOCK: Call this immediately on click to satisfy user-gesture requirements
+    // START WAKE LOCK ON CLICK
     requestWakeLock();
     
     if (!targetPeerId || !peerRef.current) return;
@@ -575,7 +574,9 @@ const App: React.FC = () => {
           webkit-playsinline="true"
           className="hidden" 
           aria-hidden="true"
-        />
+        >
+          <source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" />
+        </video>
         <audio ref={babyIncomingAudioRef} autoPlay playsInline muted={false} />
         {!isLive ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6">
@@ -675,7 +676,9 @@ const App: React.FC = () => {
         webkit-playsinline="true"
         className="hidden" 
         aria-hidden="true"
-      />
+      >
+        <source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" />
+      </video>
       {/* Native-style Mobile Header */}
       <div className="flex items-center justify-between mb-6 h-14 shrink-0 z-10 safe-top">
         <div className="flex items-center gap-3">
