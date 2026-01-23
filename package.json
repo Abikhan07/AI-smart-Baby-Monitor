@@ -16,7 +16,7 @@
     "@capacitor/cli": "^7.0.0"
   },
   "scripts": {
-    "build": "echo 'Building web assets...'",
+    "build": "mkdir -p dist && cp index.html index.tsx App.tsx types.ts metadata.json capacitor.config.json dist/ && mkdir -p dist/services && cp services/gemini.ts dist/services/ || true",
     "sync": "npx cap sync",
     "open:android": "npx cap open android"
   }
