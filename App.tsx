@@ -38,14 +38,9 @@ const ICE_SERVERS = [
   { urls: 'stun:stun4.l.google.com:19302' }
 ];
 
-/**
- * Standard 1x1 Transparent/Silent MP4. 
- * High compatibility string for keep-alive functionality.
- */
 const SLEEP_PREVENT_VIDEO_B64 = "data:video/mp4;base64,AAAAHGZ0eXBtcDQyAAAAAG1wNDJpc29tYXZjMQAAAZptb292AAAAbG12aGQAAAAA190629fdOtkAAAPoAAAAKAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAGWlveHltAAAAEGJydm0AAAAAAQAAAAGhdHJhawAAAFx0a2hkAAAAAdfdOtrX3TrZAAAAAQAAAAAAAAPoAAAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAYbWRpYQAAACBtZGhkAAAAA9fdOtrX3TrZAAAALAAAABQBAAEAAAAAAAAAImhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABUW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAPNzdGJsAAAAr3N0c2QAAAAAAAAAAQAAAJ9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAKAAoABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAALWF2Y0MBQsAM/+EAFWfCwAzYAtYCAgKAAAAAAwCAAAAeBIsXhEAAAAAAGHN0dHMAAAAAAAAAAQAAAAEAAAAUAAAAFHN0c3oAAAAAAAAAAAAAAAEAAABMc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0Y28AAAAAAAAAAQAAAEwAAAAidWR0YQAAABp0cm9sAAAAAQAAAAAAAAAAAAAAAAAAAAAA";
 
 const App: React.FC = () => {
-  // Application State
   const [mode, setMode] = useState<AppMode>('ROLE_SELECTION');
   const [parentView, setParentView] = useState<'FEED' | 'AI_INSIGHTS'>('FEED');
   const [status, setStatus] = useState<BabyStatus>({
@@ -57,16 +52,13 @@ const App: React.FC = () => {
   const [sensitivity, setSensitivity] = useState(65);
   const sensitivityRef = useRef(65);
 
-  // Connection State
   const [peerId, setPeerId] = useState<string>('');
   const [targetPeerId, setTargetPeerId] = useState<string>('');
   const [peerConnected, setPeerConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isLive, setIsLive] = useState(false);
-  // Fixed: Added missing streamError state and its setter
   const [streamError, setStreamError] = useState<string | null>(null);
   
-  // UI Controls
   const [stealthMode, setStealthMode] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
   const isTalkingRef = useRef(false);
@@ -74,16 +66,12 @@ const App: React.FC = () => {
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const audioUnlockedRef = useRef(false);
 
-  // Baby Station specific
   const [babyMicEnabled, setBabyMicEnabled] = useState(true);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [localMicVolume, setLocalMicVolume] = useState(0);
   const [parentVideoVisible, setParentVideoVisible] = useState(false);
-
-  // Parent Station specific
   const [parentCameraEnabled, setParentCameraEnabled] = useState(false);
 
-  // AI & Analysis
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [uploadedFile, setUploadedFile] = useState<FileData | null>(null);
@@ -91,7 +79,6 @@ const App: React.FC = () => {
   const [chatHistory, setChatHistory] = useState<{role: string, text: string}[]>([]);
   const [isAsking, setIsAsking] = useState(false);
 
-  // WebRTC Refs
   const peerRef = useRef<any>(null);
   const dataConnRef = useRef<any>(null);
   const activeCallRef = useRef<any>(null);
@@ -99,14 +86,12 @@ const App: React.FC = () => {
   const localMicStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   
-  // DOM Refs
   const babyIncomingAudioRef = useRef<HTMLAudioElement>(null);
   const babyIncomingVideoRef = useRef<HTMLVideoElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const noSleepVideoRef = useRef<HTMLVideoElement>(null);
   
-  // Media Logic Refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const localMicAnalyserRef = useRef<AnalyserNode | null>(null);
   const geminiRef = useRef<GeminiService | null>(null);
@@ -115,30 +100,18 @@ const App: React.FC = () => {
   useEffect(() => { sensitivityRef.current = sensitivity; }, [sensitivity]);
   useEffect(() => { geminiRef.current = new GeminiService(); }, []);
 
-  /**
-   * Unified Wake Lock Manager.
-   * Triggered synchronously by user interactions to satisfy browser security.
-   */
   const requestWakeLock = () => {
-    // 1. Synchronous Silent Video playback
     if (noSleepVideoRef.current) {
-      const v = noSleepVideoRef.current;
-      // Force play within the synchronous gesture stack
-      v.play().catch(() => { /* Silent ignore */ });
+      noSleepVideoRef.current.play().catch(() => {});
     }
-
-    // 2. Async System Locks
     const activateLocks = async () => {
       try {
-        if (KeepAwake?.keepAwake) {
-          await KeepAwake.keepAwake();
-        }
-      } catch (e) { /* Fallback */ }
-
+        if (KeepAwake?.keepAwake) await KeepAwake.keepAwake();
+      } catch (e) {}
       if ('wakeLock' in navigator) {
         try {
           wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-        } catch (e) { /* Restricted by Policy */ }
+        } catch (e) {}
       }
     };
     activateLocks();
@@ -147,23 +120,18 @@ const App: React.FC = () => {
   const releaseWakeLock = async () => {
     try {
       if (KeepAwake?.allowSleep) await KeepAwake.allowSleep();
-    } catch (e) { /* ignore */ }
-
+    } catch (e) {}
     if (wakeLockRef.current) {
       try {
         await wakeLockRef.current.release();
         wakeLockRef.current = null;
-      } catch (e) { /* ignore */ }
+      } catch (e) {}
     }
-
     if (noSleepVideoRef.current) {
-      try {
-        noSleepVideoRef.current.pause();
-      } catch (e) { /* ignore */ }
+      try { noSleepVideoRef.current.pause(); } catch (e) {}
     }
   };
 
-  // Mic Visualization Loop
   useEffect(() => {
     let frameId: number;
     const dataArray = new Uint8Array(32);
@@ -196,25 +164,21 @@ const App: React.FC = () => {
       setParentVideoVisible(data.enabled);
       return;
     }
-    if (data.noiseLevel !== undefined) {
-      setStatus(data);
-    }
+    if (data.noiseLevel !== undefined) setStatus(data);
   }, []);
 
   const createBlankVideoTrack = () => {
     const canvas = document.createElement('canvas');
-    canvas.width = 1; canvas.height = 1;
+    canvas.width = 640; canvas.height = 480;
     const ctx = canvas.getContext('2d');
-    if (ctx) { ctx.fillStyle = '#000'; ctx.fillRect(0,0,1,1); }
-    return (canvas as any).captureStream(1).getVideoTracks()[0];
+    if (ctx) { ctx.fillStyle = '#000'; ctx.fillRect(0,0,640,480); }
+    const stream = (canvas as any).captureStream(1);
+    return stream.getVideoTracks()[0];
   };
 
   const createSilentAudioTrack = () => {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
     const dst = ctx.createMediaStreamDestination();
-    const oscillator = ctx.createOscillator();
-    oscillator.connect(dst);
-    oscillator.start();
     const track = dst.stream.getAudioTracks()[0];
     track.enabled = false; 
     return track;
@@ -243,7 +207,6 @@ const App: React.FC = () => {
     setStealthMode(false);
     setParentCameraEnabled(false);
     setParentVideoVisible(false);
-    // Reset any stream errors
     setStreamError(null);
     setStatus({
       isCrying: false,
@@ -254,7 +217,6 @@ const App: React.FC = () => {
     setMode('ROLE_SELECTION');
   };
 
-  // Initialize Peer
   useEffect(() => {
     if (mode === 'ROLE_SELECTION' || peerRef.current) return;
     const initPeer = () => {
@@ -274,16 +236,13 @@ const App: React.FC = () => {
       });
       peer.on('call', (call: any) => {
         activeCallRef.current = call;
-        
         let answerStream: MediaStream;
         if (mode === 'BABY_STATION' && localStreamRef.current) {
           answerStream = localStreamRef.current;
         } else {
           answerStream = new MediaStream([createBlankVideoTrack(), createSilentAudioTrack()]);
         }
-        
         call.answer(answerStream);
-        
         call.on('stream', (s: MediaStream) => {
           remoteStreamRef.current = s;
           if (mode === 'PARENT_STATION' && remoteVideoRef.current) {
@@ -295,6 +254,7 @@ const App: React.FC = () => {
              }
              if (babyIncomingVideoRef.current) {
                babyIncomingVideoRef.current.srcObject = s;
+               babyIncomingVideoRef.current.play().catch(e => console.error("Parent video autoplay failed", e));
              }
           }
           setPeerConnected(true);
@@ -320,44 +280,32 @@ const App: React.FC = () => {
 
   const startNurseryMonitor = async (forceFacingMode?: 'user' | 'environment') => {
     requestWakeLock();
-    // Fixed: Resetting error state before starting
     setStreamError(null);
     const modeToUse = forceFacingMode || facingMode;
     try {
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(t => t.stop());
-      }
+      if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
         video: { facingMode: modeToUse, width: { ideal: 1280 }, height: { ideal: 720 } }
       });
-      
       stream.getAudioTracks().forEach(t => t.enabled = babyMicEnabled);
       localStreamRef.current = stream;
-      
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLive(true);
-      
       if (activeCallRef.current && activeCallRef.current.peerConnection) {
         const senders = activeCallRef.current.peerConnection.getSenders();
         const videoTrack = stream.getVideoTracks()[0];
         const audioTrack = stream.getAudioTracks()[0];
-        
         senders.forEach((sender: any) => {
-          if (sender.track?.kind === 'video' && videoTrack) {
-            sender.replaceTrack(videoTrack).catch(console.error);
-          } else if (sender.track?.kind === 'audio' && audioTrack) {
-            sender.replaceTrack(audioTrack).catch(console.error);
-          }
+          if (sender.track?.kind === 'video' && videoTrack) sender.replaceTrack(videoTrack).catch(console.error);
+          else if (sender.track?.kind === 'audio' && audioTrack) sender.replaceTrack(audioTrack).catch(console.error);
         });
       }
-
       const audioCtx = new AudioContext();
       const source = audioCtx.createMediaStreamSource(stream);
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
-
       const interval = setInterval(() => {
         if (mode !== 'BABY_STATION' || !localStreamRef.current) { clearInterval(interval); return; }
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -374,10 +322,7 @@ const App: React.FC = () => {
         setStatus(newStatus);
         if (dataConnRef.current?.open) dataConnRef.current.send(newStatus);
       }, NOISE_POLL_INTERVAL);
-    } catch (e) { 
-      // Fixed: Setting error state if access is denied
-      setStreamError("Access denied."); 
-    }
+    } catch (e) { setStreamError("Access denied."); }
   };
 
   const flipCamera = () => {
@@ -389,38 +334,29 @@ const App: React.FC = () => {
   const toggleBabyMic = () => {
     const newState = !babyMicEnabled;
     setBabyMicEnabled(newState);
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach(t => t.enabled = newState);
-    }
+    if (localStreamRef.current) localStreamRef.current.getAudioTracks().forEach(t => t.enabled = newState);
   };
 
   const linkToNursery = async () => {
     requestWakeLock();
     if (!targetPeerId || !peerRef.current) return;
     setIsConnecting(true);
-    // Fixed: Reset error state before linking
     setStreamError(null);
     try {
       const conn = peerRef.current.connect(targetPeerId, { reliable: true });
       dataConnRef.current = conn;
       conn.on('open', () => setPeerConnected(true));
       conn.on('data', handleData);
-      
-      const constraints = { audio: true, video: parentCameraEnabled };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: parentCameraEnabled });
       localMicStreamRef.current = stream;
-      
       stream.getAudioTracks().forEach(t => t.enabled = false);
-      
       let videoTrack = parentCameraEnabled ? stream.getVideoTracks()[0] : createBlankVideoTrack();
-      
       if (!audioContextRef.current) audioContextRef.current = new AudioContext();
       const source = audioContextRef.current.createMediaStreamSource(stream);
       const analyser = audioContextRef.current.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
       localMicAnalyserRef.current = analyser;
-
       const call = peerRef.current.call(targetPeerId, new MediaStream([...stream.getAudioTracks(), videoTrack]));
       activeCallRef.current = call;
       call.on('stream', (s: MediaStream) => {
@@ -434,7 +370,6 @@ const App: React.FC = () => {
       });
     } catch (e) { 
       setIsConnecting(false); 
-      // Fixed: Setting error message if link fails
       setStreamError("Link failed."); 
     }
   };
@@ -453,35 +388,36 @@ const App: React.FC = () => {
   const toggleParentCamera = async () => {
     const newState = !parentCameraEnabled;
     setParentCameraEnabled(newState);
-    
     if (dataConnRef.current?.open) {
       dataConnRef.current.send({ type: 'PARENT_VIDEO_STATUS', enabled: newState });
     }
-
     if (peerConnected && activeCallRef.current?.peerConnection) {
        try {
          let newTrack;
          if (newState) {
-           if (localMicStreamRef.current?.getVideoTracks().length === 0) {
-             const vStream = await navigator.mediaDevices.getUserMedia({ video: true });
-             const vTrack = vStream.getVideoTracks()[0];
-             localMicStreamRef.current.addTrack(vTrack);
-             newTrack = vTrack;
-           } else {
-             newTrack = localMicStreamRef.current?.getVideoTracks()[0];
+           const vStream = await navigator.mediaDevices.getUserMedia({ video: true });
+           newTrack = vStream.getVideoTracks()[0];
+           if (localMicStreamRef.current) {
+             localMicStreamRef.current.getVideoTracks().forEach(t => {
+               localMicStreamRef.current?.removeTrack(t);
+               t.stop();
+             });
+             localMicStreamRef.current.addTrack(newTrack);
            }
          } else {
            newTrack = createBlankVideoTrack();
+           if (localMicStreamRef.current) {
+             localMicStreamRef.current.getVideoTracks().forEach(t => {
+               localMicStreamRef.current?.removeTrack(t);
+               t.stop();
+             });
+             localMicStreamRef.current.addTrack(newTrack);
+           }
          }
-         
          const senders = activeCallRef.current.peerConnection.getSenders();
          const videoSender = senders.find((s: any) => s.track?.kind === 'video');
-         if (videoSender && newTrack) {
-           videoSender.replaceTrack(newTrack);
-         }
-       } catch (err) {
-         console.error("Camera Toggle Error:", err);
-       }
+         if (videoSender && newTrack) await videoSender.replaceTrack(newTrack);
+       } catch (err) { console.error("Camera Toggle Error:", err); }
     }
   };
 
@@ -550,16 +486,7 @@ const App: React.FC = () => {
   if (mode === 'BABY_STATION') {
     return (
       <div className={`fixed inset-0 ${stealthMode ? 'bg-[#000000]' : 'bg-[#020617]'} flex flex-col text-white transition-colors duration-500 overflow-hidden`}>
-        {/* Hidden NoSleep Video Fallback (Static source prevents loading error) */}
-        <video 
-          ref={noSleepVideoRef} 
-          loop 
-          muted 
-          playsInline 
-          webkit-playsinline="true"
-          className="hidden" 
-          aria-hidden="true"
-        >
+        <video ref={noSleepVideoRef} loop muted playsInline webkit-playsinline="true" className="hidden" aria-hidden="true">
           <source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" />
         </video>
         <audio ref={babyIncomingAudioRef} autoPlay playsInline muted={false} />
@@ -580,7 +507,7 @@ const App: React.FC = () => {
             <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${stealthMode ? 'opacity-0' : 'opacity-100'}`} />
             
             <div className={`absolute top-16 right-4 w-36 h-48 rounded-[2rem] overflow-hidden border-2 border-white/20 bg-black shadow-2xl transition-all duration-700 ${parentVideoVisible && !stealthMode ? 'opacity-100 scale-100' : 'opacity-0 scale-50 pointer-events-none'}`}>
-               <video ref={babyIncomingVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+               <video ref={babyIncomingVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end justify-center pb-2">
                  <span className="text-[8px] font-bold uppercase tracking-widest text-white/80">Parent</span>
                </div>
@@ -653,19 +580,9 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#000000] flex flex-col p-4 md:p-6 text-white overflow-hidden">
-      {/* Hidden NoSleep Video Fallback */}
-      <video 
-        ref={noSleepVideoRef} 
-        loop 
-        muted 
-        playsInline 
-        webkit-playsinline="true"
-        className="hidden" 
-        aria-hidden="true"
-      >
+      <video ref={noSleepVideoRef} loop muted playsInline webkit-playsinline="true" className="hidden" aria-hidden="true">
         <source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" />
       </video>
-      {/* Native-style Mobile Header */}
       <div className="flex items-center justify-between mb-6 h-14 shrink-0 z-10 safe-top">
         <div className="flex items-center gap-3">
           <button onClick={resetStation} className="p-2.5 bg-slate-900/50 rounded-2xl border border-slate-800 transition-all active:scale-90">
@@ -688,19 +605,11 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0 overflow-hidden mb-safe">
         {parentView === 'FEED' ? (
           <div className="flex-1 flex flex-col gap-4">
-            {/* Monitor Window Optimized for OLED */}
             <div className={`flex-1 bg-[#000000] rounded-[2.5rem] border overflow-hidden relative transition-all duration-700 ${status.isCrying ? 'border-red-600 ring-8 ring-red-600/10' : 'border-slate-800'}`}>
-              <video 
-                ref={remoteVideoRef} 
-                autoPlay 
-                playsInline 
-                muted={isMuted} 
-                className="w-full h-full object-cover" 
-              />
+              <video ref={remoteVideoRef} autoPlay playsInline muted={isMuted} className="w-full h-full object-cover" />
               
               {peerConnected && isMuted && (
                 <div onClick={() => { setIsMuted(false); requestWakeLock(); }} className="absolute inset-0 flex flex-col items-center justify-center bg-[#000000]/70 backdrop-blur-md cursor-pointer z-20">
@@ -734,7 +643,6 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {/* Mobile-Native Action Bar */}
             <div className="h-28 flex gap-4 shrink-0 pb-safe">
               <button 
                 onMouseDown={() => { setParentMic(true); requestWakeLock(); }} 
@@ -816,7 +724,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Persistent Mobile Status Bar */}
       <div className={`mt-4 lg:hidden px-6 py-4 rounded-[2rem] border flex items-center justify-between transition-all duration-1000 ${status.isCrying ? 'bg-red-600 text-white border-white animate-alert-border' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
         <div className="flex items-center gap-4">
           <Baby className={`w-5 h-5 ${status.isCrying ? 'animate-bounce' : ''}`} />
