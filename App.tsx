@@ -6,14 +6,12 @@ import {
   Mic, 
   MicOff, 
   ChevronLeft, 
-  Link2, 
   Power, 
   Activity, 
   Volume2, 
   VolumeX, 
   MessageSquare, 
   SwitchCamera,
-  Settings2,
   Lock,
   Signal,
   Smartphone,
@@ -21,11 +19,9 @@ import {
   Sparkles,
   BrainCircuit,
   Upload,
-  ShieldAlert,
   LogOut,
   Video,
-  VideoOff,
-  User
+  VideoOff
 } from 'lucide-react';
 // Capacitor Native Imports
 import { KeepAwake } from '@capacitor-community/keep-awake';
@@ -43,8 +39,8 @@ const ICE_SERVERS = [
 ];
 
 /**
- * Minimal silent MP4 base64. 
- * This is a 1-frame silent video known to be highly compatible for wake-locking.
+ * Valid 1x1 Pixel Silent MP4 base64.
+ * This specific string is high-compatibility for WebViews to keep screen active.
  */
 const SLEEP_PREVENT_VIDEO_B64 = "data:video/mp4;base64,AAAAHGZ0eXBtcDQyAAAAAG1wNDJpc29tYXZjMQAAAZptb292AAAAbG12aGQAAAAA190629fdOtkAAAPoAAAAKAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAGWlveHltAAAAEGJydm0AAAAAAQAAAAGhdHJhawAAAFx0a2hkAAAAAdfdOtrX3TrZAAAAAQAAAAAAAAPoAAAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAYbWRpYQAAACBtZGhkAAAAA9fdOtrX3TrZAAAALAAAABQBAAEAAAAAAAAAImhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABUW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAPNzdGJsAAAAr3N0c2QAAAAAAAAAAQAAAJ9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAKAAoABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAALWF2Y0MBQsAM/+EAFWfCwAzYAtYCAgKAAAAAAwCAAAAeBIsXhEAAAAAAGHN0dHMAAAAAAAAAAQAAAAEAAAAUAAAAFHN0c3oAAAAAAAAAAAAAAAEAAABMc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0Y28AAAAAAAAAAQAAAEwAAAAidWR0YQAAABp0cm9sAAAAAQAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -70,7 +66,6 @@ const App: React.FC = () => {
   
   // UI Controls
   const [stealthMode, setStealthMode] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [isTalking, setIsTalking] = useState(false);
   const isTalkingRef = useRef(false);
@@ -120,48 +115,37 @@ const App: React.FC = () => {
   useEffect(() => { geminiRef.current = new GeminiService(); }, []);
 
   /**
-   * Triple-Layer Wake Lock Strategy.
-   * CRITICAL: Video playback MUST happen immediately in the click call stack.
+   * Unified Wake Lock Manager.
+   * This is designed to be called directly inside onClick events.
    */
   const requestWakeLock = () => {
-    console.log('Synchronizing Screen Wake Locks...');
-
-    // LAYER 1: Synchronous Video Playback (Gesture Sensitive)
-    // CRITICAL: .play() must be the very first thing called in the synchronous gesture stack.
+    // 1. Synchronous Video Hack (Highest priority for gesture stack)
     if (noSleepVideoRef.current) {
-      const video = noSleepVideoRef.current;
-      video.play().then(() => {
-        console.log('Visual Wake Lock (Video): ACTIVE');
-      }).catch(err => {
-        console.warn('Visual Wake Lock failed. Browsers may require explicit user touch.', err);
+      const v = noSleepVideoRef.current;
+      // Re-assigning src and loading ensures "no supported sources" error is bypassed
+      v.src = SLEEP_PREVENT_VIDEO_B64;
+      v.load(); 
+      v.play().catch(() => {
+        /* Ignore silently - some frames block this regardless */
       });
     }
 
-    // Handle asynchronous locks in a non-blocking way
-    const handleAsyncLocks = async () => {
-      // LAYER 2: Native Capacitor Plugin
+    // 2. Native Capacitor Bridge (Async)
+    const runNativeLock = async () => {
       try {
         if (KeepAwake && typeof KeepAwake.keepAwake === 'function') {
           await KeepAwake.keepAwake();
-          console.log('Native Android Wake Lock: ACTIVE');
-          return;
         }
-      } catch (e) {
-        console.warn('Native KeepAwake plugin failed.');
-      }
+      } catch (e) { /* Fallback to web */ }
 
-      // LAYER 3: Web Wake Lock API
+      // 3. Web Wake Lock API (Async)
       if ('wakeLock' in navigator) {
         try {
           wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-          console.log('Web Screen Wake Lock: ACTIVE');
-        } catch (err: any) {
-          console.warn(`Web WakeLock NotAllowedError: Relying on Video Fallback.`);
-        }
+        } catch (e) { /* Feature policy restriction */ }
       }
     };
-
-    handleAsyncLocks();
+    runNativeLock();
   };
 
   const releaseWakeLock = async () => {
@@ -179,9 +163,9 @@ const App: React.FC = () => {
     if (noSleepVideoRef.current) {
       try {
         noSleepVideoRef.current.pause();
+        noSleepVideoRef.current.src = "";
       } catch (e) { /* ignore */ }
     }
-    console.log('All Wake Locks: RELEASED');
   };
 
   // Mic Visualization Loop
@@ -324,7 +308,7 @@ const App: React.FC = () => {
   }, [mode, handleData]);
 
   const unlockSpeaker = async () => {
-    requestWakeLock();
+    requestWakeLock(); // Call immediately on click
     try {
       if (!audioContextRef.current) audioContextRef.current = new AudioContext();
       if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
@@ -338,7 +322,7 @@ const App: React.FC = () => {
   };
 
   const startNurseryMonitor = async (forceFacingMode?: 'user' | 'environment') => {
-    requestWakeLock();
+    requestWakeLock(); // Call immediately on click
     setStreamError(null);
     const modeToUse = forceFacingMode || facingMode;
     try {
@@ -412,7 +396,7 @@ const App: React.FC = () => {
   };
 
   const linkToNursery = async () => {
-    requestWakeLock();
+    requestWakeLock(); // Call immediately on click
     if (!targetPeerId || !peerRef.current) return;
     setIsConnecting(true);
     setStreamError(null);
@@ -562,7 +546,7 @@ const App: React.FC = () => {
   if (mode === 'BABY_STATION') {
     return (
       <div className={`fixed inset-0 ${stealthMode ? 'bg-[#000000]' : 'bg-[#020617]'} flex flex-col text-white transition-colors duration-500 overflow-hidden`}>
-        {/* Hidden NoSleep Video Fallback (Bypasses restriction policy via playback hack) */}
+        {/* Hidden NoSleep Video Fallback */}
         <video 
           ref={noSleepVideoRef} 
           loop 
@@ -571,9 +555,8 @@ const App: React.FC = () => {
           webkit-playsinline="true"
           className="hidden" 
           aria-hidden="true"
-        >
-          <source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" />
-        </video>
+          src={SLEEP_PREVENT_VIDEO_B64}
+        />
         <audio ref={babyIncomingAudioRef} autoPlay playsInline muted={false} />
         {!isLive ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6">
@@ -664,7 +647,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#000000] flex flex-col p-4 md:p-6 text-white overflow-hidden">
-      {/* Hidden NoSleep Video Fallback (Bypasses restriction policy via playback hack) */}
       <video 
         ref={noSleepVideoRef} 
         loop 
@@ -673,9 +655,8 @@ const App: React.FC = () => {
         webkit-playsinline="true"
         className="hidden" 
         aria-hidden="true"
-      >
-        <source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" />
-      </video>
+        src={SLEEP_PREVENT_VIDEO_B64}
+      />
       {/* Native-style Mobile Header */}
       <div className="flex items-center justify-between mb-6 h-14 shrink-0 z-10 safe-top">
         <div className="flex items-center gap-3">
@@ -714,7 +695,7 @@ const App: React.FC = () => {
               />
               
               {peerConnected && isMuted && (
-                <div onClick={() => setIsMuted(false)} className="absolute inset-0 flex flex-col items-center justify-center bg-[#000000]/70 backdrop-blur-md cursor-pointer z-20">
+                <div onClick={() => { setIsMuted(false); requestWakeLock(); }} className="absolute inset-0 flex flex-col items-center justify-center bg-[#000000]/70 backdrop-blur-md cursor-pointer z-20">
                   <div className="bg-blue-600 p-6 rounded-[2rem] mb-4 shadow-2xl active:scale-90"><VolumeX className="w-8 h-8 text-white" /></div>
                   <p className="text-white font-bold uppercase tracking-[0.2em] text-[10px] opacity-80">Enable Audio Stream</p>
                 </div>
@@ -737,7 +718,7 @@ const App: React.FC = () => {
 
               {peerConnected && (
                 <div className="absolute top-6 right-6 flex gap-3 z-40">
-                  <button onClick={() => setIsMuted(!isMuted)} className={`p-4 rounded-2xl backdrop-blur-3xl transition-all border shadow-2xl active:scale-90 ${isMuted ? 'bg-red-600 border-red-400' : 'bg-slate-900/80 border-white/20'}`}>
+                  <button onClick={() => { setIsMuted(!isMuted); requestWakeLock(); }} className={`p-4 rounded-2xl backdrop-blur-3xl transition-all border shadow-2xl active:scale-90 ${isMuted ? 'bg-red-600 border-red-400' : 'bg-slate-900/80 border-white/20'}`}>
                     {isMuted ? <VolumeX className="w-5 h-5 text-white" /> : <Volume2 className="w-5 h-5 text-white" />}
                   </button>
                 </div>
@@ -747,8 +728,11 @@ const App: React.FC = () => {
             {/* Mobile-Native Action Bar */}
             <div className="h-28 flex gap-4 shrink-0 pb-safe">
               <button 
-                onMouseDown={() => setParentMic(true)} onMouseUp={() => setParentMic(false)} onMouseLeave={() => setParentMic(false)}
-                onTouchStart={(e) => { e.preventDefault(); setParentMic(true); }} onTouchEnd={(e) => { e.preventDefault(); setParentMic(false); }}
+                onMouseDown={() => { setParentMic(true); requestWakeLock(); }} 
+                onMouseUp={() => setParentMic(false)} 
+                onMouseLeave={() => setParentMic(false)}
+                onTouchStart={(e) => { e.preventDefault(); setParentMic(true); requestWakeLock(); }} 
+                onTouchEnd={(e) => { e.preventDefault(); setParentMic(false); }}
                 className={`flex-[2.5] h-full rounded-[2.5rem] border transition-all flex items-center justify-center gap-5 active:scale-[0.97] ${isTalking ? 'bg-blue-600 border-blue-400 shadow-[0_20px_40px_rgba(37,99,235,0.3)]' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
               >
                 <div className={`w-14 h-14 rounded-3xl flex items-center justify-center transition-all shadow-lg ${isTalking ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-500'}`}>
@@ -761,7 +745,7 @@ const App: React.FC = () => {
               </button>
 
               <button 
-                onClick={toggleParentCamera}
+                onClick={() => { toggleParentCamera(); requestWakeLock(); }}
                 className={`flex-1 h-full rounded-[2.5rem] border transition-all flex flex-col items-center justify-center gap-2 active:scale-[0.97] ${parentCameraEnabled ? 'bg-indigo-600 border-indigo-400 shadow-xl' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
               >
                 {parentCameraEnabled ? <Video className="w-7 h-7" /> : <VideoOff className="w-7 h-7 text-slate-500" />}
