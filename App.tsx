@@ -42,6 +42,12 @@ const ICE_SERVERS = [
   { urls: 'stun:stun4.l.google.com:19302' }
 ];
 
+/**
+ * Valid 1x1 pixel silent MP4 to keep screen awake in restricted environments.
+ * This base64 is a standard 1-second silent clip that is highly compatible with Android WebViews.
+ */
+const SLEEP_PREVENT_VIDEO_B64 = "data:video/mp4;base64,AAAAHGZ0eXBtcDQyAAAAAG1wNDJpc29tYXZjMQAAAZptb292AAAAbG12aGQAAAAA190629fdOtkAAAPoAAAAKAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAGWlveHltAAAAEGJydm0AAAAAAQAAAAGhdHJhawAAAFx0a2hkAAAAAdfdOtrX3TrZAAAAAQAAAAAAAAPoAAAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAYbWRpYQAAACBtZGhkAAAAA9fdOtrX3TrZAAAALAAAABQBAAEAAAAAAAAAImhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABUW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAPNzdGJsAAAAr3N0c2QAAAAAAAAAAQAAAJ9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAKAAoABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAALWF2Y0MBQsAM/+EAFWfCwAzYAtYCAgKAAAAAAwCAAAAeBIsXhEAAAAAAGHN0dHMAAAAAAAAAAQAAAAEAAAAUAAAAFHN0c3oAAAAAAAAAAAAAAAEAAABMc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0Y28AAAAAAAAAAQAAAEwAAAAidWR0YQAAABp0cm9sAAAAAQAAAAAAAAAAAAAAAAAAAAAA";
+
 const App: React.FC = () => {
   // Application State
   const [mode, setMode] = useState<AppMode>('ROLE_SELECTION');
@@ -102,6 +108,7 @@ const App: React.FC = () => {
   const babyIncomingVideoRef = useRef<HTMLVideoElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const noSleepVideoRef = useRef<HTMLVideoElement>(null);
   
   // Media Logic Refs
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -112,45 +119,67 @@ const App: React.FC = () => {
   useEffect(() => { sensitivityRef.current = sensitivity; }, [sensitivity]);
   useEffect(() => { geminiRef.current = new GeminiService(); }, []);
 
-  // Screen Wake Lock implementation for Android (Robust native-bridge version)
+  // Screen Wake Lock implementation for Android (Robust native-bridge + Video fallback)
   const requestWakeLock = async () => {
-    // 1. Try Native Capacitor Plugin (Safest for Android)
+    console.log('Initiating Screen Wake Lock sequence...');
+
+    // 1. Try Native Capacitor Plugin (Safest for Android Apps)
     try {
-      if (KeepAwake) {
+      if (KeepAwake && typeof KeepAwake.keepAwake === 'function') {
         await KeepAwake.keepAwake();
-        console.log('Native Android Wake Lock enabled');
+        console.log('Native Android Wake Lock: ACTIVE');
         return;
       }
     } catch (e) {
-      console.warn('Native KeepAwake plugin failed, falling back to Web API', e);
+      console.warn('Native KeepAwake plugin failed, falling back to Web APIs');
     }
 
-    // 2. Fallback to Web Wake Lock API (If native fails or in browser)
+    // 2. Try Web Wake Lock API (Permissions Policy may block this)
     if ('wakeLock' in navigator) {
       try {
         wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-        console.log('Web Screen Wake Lock is active');
+        console.log('Web Screen Wake Lock: ACTIVE');
+        return;
       } catch (err: any) {
-        if (err.name === 'NotAllowedError') {
-          console.error('WakeLock disallowed by policy. Ensure app is top-level and over HTTPS/Capacitor.');
-        } else {
-          console.error(`WakeLock error: ${err.name}, ${err.message}`);
-        }
+        console.warn(`Web WakeLock disallowed by policy: ${err.name}. Trying Video Fallback.`);
+      }
+    }
+
+    // 3. Final Fallback: Hidden Video Hack (Bypasses Permissions Policy & restricted frames)
+    // IMPORTANT: Must be called within a user gesture handler (click/touch)
+    if (noSleepVideoRef.current) {
+      try {
+        noSleepVideoRef.current.src = SLEEP_PREVENT_VIDEO_B64;
+        await noSleepVideoRef.current.play();
+        console.log('Visual Wake Lock (Video Hack): ACTIVE');
+      } catch (err) {
+        console.error('Wake Lock video fallback failed. Ensure this was called from a user gesture.', err);
       }
     }
   };
 
   const releaseWakeLock = async () => {
-    // 1. Release Native
+    // Release Native
     try {
-      if (KeepAwake) await KeepAwake.allowSleep();
+      if (KeepAwake && typeof KeepAwake.allowSleep === 'function') await KeepAwake.allowSleep();
     } catch (e) { /* ignore */ }
 
-    // 2. Release Web
+    // Release Web
     if (wakeLockRef.current) {
-      wakeLockRef.current.release();
-      wakeLockRef.current = null;
+      try {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      } catch (e) { /* ignore */ }
     }
+
+    // Stop Video
+    if (noSleepVideoRef.current) {
+      try {
+        noSleepVideoRef.current.pause();
+        noSleepVideoRef.current.src = "";
+      } catch (e) { /* ignore */ }
+    }
+    console.log('All Wake Locks: RELEASED');
   };
 
   // Mic Visualization Loop
@@ -294,6 +323,7 @@ const App: React.FC = () => {
 
   const unlockSpeaker = async () => {
     try {
+      // Audio unlock logic
       if (!audioContextRef.current) audioContextRef.current = new AudioContext();
       if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
       setAudioUnlocked(true);
@@ -302,10 +332,15 @@ const App: React.FC = () => {
         babyIncomingAudioRef.current.muted = false;
         await babyIncomingAudioRef.current.play();
       }
+      // Re-trigger WakeLock during this user interaction to satisfy security policies
+      requestWakeLock();
     } catch (e) { console.error(e); }
   };
 
   const startNurseryMonitor = async (forceFacingMode?: 'user' | 'environment') => {
+    // TRIPLE WAKE LOCK: Call this immediately on click to satisfy user-gesture requirements
+    requestWakeLock();
+    
     setStreamError(null);
     const modeToUse = forceFacingMode || facingMode;
     try {
@@ -322,7 +357,6 @@ const App: React.FC = () => {
       
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLive(true);
-      requestWakeLock(); // Attempt to prevent Android sleeping
       
       if (activeCallRef.current && activeCallRef.current.peerConnection) {
         const senders = activeCallRef.current.peerConnection.getSenders();
@@ -380,6 +414,9 @@ const App: React.FC = () => {
   };
 
   const linkToNursery = async () => {
+    // TRIPLE WAKE LOCK: Call this immediately on click to satisfy user-gesture requirements
+    requestWakeLock();
+    
     if (!targetPeerId || !peerRef.current) return;
     setIsConnecting(true);
     setStreamError(null);
@@ -392,7 +429,6 @@ const App: React.FC = () => {
       const constraints = { audio: true, video: parentCameraEnabled };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       localMicStreamRef.current = stream;
-      requestWakeLock(); // Attempt to prevent Android sleeping
       
       stream.getAudioTracks().forEach(t => t.enabled = false);
       
@@ -530,6 +566,16 @@ const App: React.FC = () => {
   if (mode === 'BABY_STATION') {
     return (
       <div className={`fixed inset-0 ${stealthMode ? 'bg-[#000000]' : 'bg-[#020617]'} flex flex-col text-white transition-colors duration-500 overflow-hidden`}>
+        {/* Hidden NoSleep Video Fallback (Bypasses restriction policy via playback hack) */}
+        <video 
+          ref={noSleepVideoRef} 
+          loop 
+          muted 
+          playsInline 
+          webkit-playsinline="true"
+          className="hidden" 
+          aria-hidden="true"
+        />
         <audio ref={babyIncomingAudioRef} autoPlay playsInline muted={false} />
         {!isLive ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6">
@@ -620,6 +666,16 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#000000] flex flex-col p-4 md:p-6 text-white overflow-hidden">
+      {/* Hidden NoSleep Video Fallback (Bypasses restriction policy via playback hack) */}
+      <video 
+        ref={noSleepVideoRef} 
+        loop 
+        muted 
+        playsInline 
+        webkit-playsinline="true"
+        className="hidden" 
+        aria-hidden="true"
+      />
       {/* Native-style Mobile Header */}
       <div className="flex items-center justify-between mb-6 h-14 shrink-0 z-10 safe-top">
         <div className="flex items-center gap-3">

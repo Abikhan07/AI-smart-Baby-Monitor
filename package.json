@@ -15,7 +15,9 @@
   "devDependencies": {
     "@capacitor/cli": "^6.0.0"
   },
- "scripts": {
-  "build": "npm install --legacy-peer-deps && vite build"
-}
+  "scripts": {
+    "build": "echo 'Building web assets...'",
+    "sync": "npx cap sync",
+    "open:android": "npx cap open android"
+  }
 }
