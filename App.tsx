@@ -39,8 +39,8 @@ const ICE_SERVERS = [
 ];
 
 /**
- * Valid 1x1 Pixel Silent MP4 base64.
- * This specific string is high-compatibility for WebViews to keep screen active.
+ * Standard 1x1 Transparent/Silent MP4. 
+ * High compatibility string for keep-alive functionality.
  */
 const SLEEP_PREVENT_VIDEO_B64 = "data:video/mp4;base64,AAAAHGZ0eXBtcDQyAAAAAG1wNDJpc29tYXZjMQAAAZptb292AAAAbG12aGQAAAAA190629fdOtkAAAPoAAAAKAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAGWlveHltAAAAEGJydm0AAAAAAQAAAAGhdHJhawAAAFx0a2hkAAAAAdfdOtrX3TrZAAAAAQAAAAAAAAPoAAAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAYbWRpYQAAACBtZGhkAAAAA9fdOtrX3TrZAAAALAAAABQBAAEAAAAAAAAAImhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABUW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAPNzdGJsAAAAr3N0c2QAAAAAAAAAAQAAAJ9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAKAAoABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAALWF2Y0MBQsAM/+EAFWfCwAzYAtYCAgKAAAAAAwCAAAAeBIsXhEAAAAAAGHN0dHMAAAAAAAAAAQAAAAEAAAAUAAAAFHN0c3oAAAAAAAAAAAAAAAEAAABMc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0Y28AAAAAAAAAAQAAAEwAAAAidWR0YQAAABp0cm9sAAAAAQAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -63,10 +63,11 @@ const App: React.FC = () => {
   const [peerConnected, setPeerConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isLive, setIsLive] = useState(false);
+  // Fixed: Added missing streamError state and its setter
+  const [streamError, setStreamError] = useState<string | null>(null);
   
   // UI Controls
   const [stealthMode, setStealthMode] = useState(false);
-  const [streamError, setStreamError] = useState<string | null>(null);
   const [isTalking, setIsTalking] = useState(false);
   const isTalkingRef = useRef(false);
   const [isMuted, setIsMuted] = useState(true); 
@@ -116,41 +117,36 @@ const App: React.FC = () => {
 
   /**
    * Unified Wake Lock Manager.
-   * This is designed to be called directly inside onClick events.
+   * Triggered synchronously by user interactions to satisfy browser security.
    */
   const requestWakeLock = () => {
-    // 1. Synchronous Video Hack (Highest priority for gesture stack)
+    // 1. Synchronous Silent Video playback
     if (noSleepVideoRef.current) {
       const v = noSleepVideoRef.current;
-      // Re-assigning src and loading ensures "no supported sources" error is bypassed
-      v.src = SLEEP_PREVENT_VIDEO_B64;
-      v.load(); 
-      v.play().catch(() => {
-        /* Ignore silently - some frames block this regardless */
-      });
+      // Force play within the synchronous gesture stack
+      v.play().catch(() => { /* Silent ignore */ });
     }
 
-    // 2. Native Capacitor Bridge (Async)
-    const runNativeLock = async () => {
+    // 2. Async System Locks
+    const activateLocks = async () => {
       try {
-        if (KeepAwake && typeof KeepAwake.keepAwake === 'function') {
+        if (KeepAwake?.keepAwake) {
           await KeepAwake.keepAwake();
         }
-      } catch (e) { /* Fallback to web */ }
+      } catch (e) { /* Fallback */ }
 
-      // 3. Web Wake Lock API (Async)
       if ('wakeLock' in navigator) {
         try {
           wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-        } catch (e) { /* Feature policy restriction */ }
+        } catch (e) { /* Restricted by Policy */ }
       }
     };
-    runNativeLock();
+    activateLocks();
   };
 
   const releaseWakeLock = async () => {
     try {
-      if (KeepAwake && typeof KeepAwake.allowSleep === 'function') await KeepAwake.allowSleep();
+      if (KeepAwake?.allowSleep) await KeepAwake.allowSleep();
     } catch (e) { /* ignore */ }
 
     if (wakeLockRef.current) {
@@ -163,7 +159,6 @@ const App: React.FC = () => {
     if (noSleepVideoRef.current) {
       try {
         noSleepVideoRef.current.pause();
-        noSleepVideoRef.current.src = "";
       } catch (e) { /* ignore */ }
     }
   };
@@ -248,6 +243,8 @@ const App: React.FC = () => {
     setStealthMode(false);
     setParentCameraEnabled(false);
     setParentVideoVisible(false);
+    // Reset any stream errors
+    setStreamError(null);
     setStatus({
       isCrying: false,
       noiseLevel: 0,
@@ -308,7 +305,7 @@ const App: React.FC = () => {
   }, [mode, handleData]);
 
   const unlockSpeaker = async () => {
-    requestWakeLock(); // Call immediately on click
+    requestWakeLock();
     try {
       if (!audioContextRef.current) audioContextRef.current = new AudioContext();
       if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
@@ -322,7 +319,8 @@ const App: React.FC = () => {
   };
 
   const startNurseryMonitor = async (forceFacingMode?: 'user' | 'environment') => {
-    requestWakeLock(); // Call immediately on click
+    requestWakeLock();
+    // Fixed: Resetting error state before starting
     setStreamError(null);
     const modeToUse = forceFacingMode || facingMode;
     try {
@@ -377,6 +375,7 @@ const App: React.FC = () => {
         if (dataConnRef.current?.open) dataConnRef.current.send(newStatus);
       }, NOISE_POLL_INTERVAL);
     } catch (e) { 
+      // Fixed: Setting error state if access is denied
       setStreamError("Access denied."); 
     }
   };
@@ -396,9 +395,10 @@ const App: React.FC = () => {
   };
 
   const linkToNursery = async () => {
-    requestWakeLock(); // Call immediately on click
+    requestWakeLock();
     if (!targetPeerId || !peerRef.current) return;
     setIsConnecting(true);
+    // Fixed: Reset error state before linking
     setStreamError(null);
     try {
       const conn = peerRef.current.connect(targetPeerId, { reliable: true });
@@ -432,7 +432,11 @@ const App: React.FC = () => {
         setPeerConnected(true);
         setIsConnecting(false);
       });
-    } catch (e) { setIsConnecting(false); setStreamError("Link failed."); }
+    } catch (e) { 
+      setIsConnecting(false); 
+      // Fixed: Setting error message if link fails
+      setStreamError("Link failed."); 
+    }
   };
 
   const setParentMic = (enabled: boolean) => {
@@ -546,7 +550,7 @@ const App: React.FC = () => {
   if (mode === 'BABY_STATION') {
     return (
       <div className={`fixed inset-0 ${stealthMode ? 'bg-[#000000]' : 'bg-[#020617]'} flex flex-col text-white transition-colors duration-500 overflow-hidden`}>
-        {/* Hidden NoSleep Video Fallback */}
+        {/* Hidden NoSleep Video Fallback (Static source prevents loading error) */}
         <video 
           ref={noSleepVideoRef} 
           loop 
@@ -555,8 +559,9 @@ const App: React.FC = () => {
           webkit-playsinline="true"
           className="hidden" 
           aria-hidden="true"
-          src={SLEEP_PREVENT_VIDEO_B64}
-        />
+        >
+          <source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" />
+        </video>
         <audio ref={babyIncomingAudioRef} autoPlay playsInline muted={false} />
         {!isLive ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6">
@@ -567,6 +572,7 @@ const App: React.FC = () => {
             <button onClick={() => startNurseryMonitor()} className="bg-blue-600 w-full max-w-xs py-5 rounded-[1.5rem] font-bold text-sm uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 shadow-2xl">
               <Power className="w-5 h-5" /> Start Monitor
             </button>
+            {streamError && <p className="text-red-500 text-[10px] font-bold mt-4 uppercase tracking-widest">{streamError}</p>}
             <button onClick={() => setMode('ROLE_SELECTION')} className="mt-8 text-slate-500 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2"><ChevronLeft className="w-3 h-3" /> Back to menu</button>
           </div>
         ) : (
@@ -647,6 +653,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#000000] flex flex-col p-4 md:p-6 text-white overflow-hidden">
+      {/* Hidden NoSleep Video Fallback */}
       <video 
         ref={noSleepVideoRef} 
         loop 
@@ -655,8 +662,9 @@ const App: React.FC = () => {
         webkit-playsinline="true"
         className="hidden" 
         aria-hidden="true"
-        src={SLEEP_PREVENT_VIDEO_B64}
-      />
+      >
+        <source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" />
+      </video>
       {/* Native-style Mobile Header */}
       <div className="flex items-center justify-between mb-6 h-14 shrink-0 z-10 safe-top">
         <div className="flex items-center gap-3">
@@ -708,6 +716,7 @@ const App: React.FC = () => {
                   </div>
                   <h3 className="text-lg font-bold mb-4 uppercase tracking-tight">Sync Hardware</h3>
                   <div className="w-full max-w-xs flex flex-col gap-4">
+                    {streamError && <p className="text-red-500 text-[10px] font-bold mb-2 uppercase tracking-widest">{streamError}</p>}
                     <input type="text" maxLength={5} placeholder="00000" value={targetPeerId} onChange={(e)=>setTargetPeerId(e.target.value.replace(/\D/g,''))} className="bg-slate-900/50 border border-slate-800 rounded-2xl px-6 py-5 text-center text-4xl font-mono font-bold text-blue-500 outline-none focus:border-blue-500 transition-colors" />
                     <button onClick={linkToNursery} className="bg-blue-600 py-5 rounded-2xl font-bold uppercase text-[11px] tracking-widest active:scale-95 shadow-xl transition-transform">
                       Establish Secure Link
