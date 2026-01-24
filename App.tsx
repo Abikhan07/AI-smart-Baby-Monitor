@@ -84,7 +84,8 @@ const App: React.FC = () => {
   const activeCallRef = useRef<any>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const localMicStreamRef = useRef<MediaStream | null>(null);
-  const remoteStreamRef = useRef<MediaStream | null>(null);
+  // Replaced ref with state to trigger UI updates for remote video
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   
   const babyIncomingAudioRef = useRef<HTMLAudioElement>(null);
   const babyIncomingVideoRef = useRef<HTMLVideoElement>(null);
@@ -99,6 +100,23 @@ const App: React.FC = () => {
 
   useEffect(() => { sensitivityRef.current = sensitivity; }, [sensitivity]);
   useEffect(() => { geminiRef.current = new GeminiService(); }, []);
+
+  // Sync Remote Stream to Video Elements
+  useEffect(() => {
+    if (remoteStream) {
+      if (mode === 'BABY_STATION' && babyIncomingVideoRef.current) {
+        if (babyIncomingVideoRef.current.srcObject !== remoteStream) {
+          babyIncomingVideoRef.current.srcObject = remoteStream;
+          babyIncomingVideoRef.current.play().catch(() => {});
+        }
+      } else if (mode === 'PARENT_STATION' && remoteVideoRef.current) {
+        if (remoteVideoRef.current.srcObject !== remoteStream) {
+          remoteVideoRef.current.srcObject = remoteStream;
+          remoteVideoRef.current.play().catch(() => {});
+        }
+      }
+    }
+  }, [remoteStream, mode, parentVideoVisible, peerConnected]);
 
   const requestWakeLock = () => {
     if (noSleepVideoRef.current) {
@@ -169,11 +187,29 @@ const App: React.FC = () => {
 
   const createBlankVideoTrack = () => {
     const canvas = document.createElement('canvas');
-    canvas.width = 640; canvas.height = 480;
+    canvas.width = 320; canvas.height = 240;
     const ctx = canvas.getContext('2d');
-    if (ctx) { ctx.fillStyle = '#000'; ctx.fillRect(0,0,640,480); }
-    const stream = (canvas as any).captureStream(1);
-    return stream.getVideoTracks()[0];
+    
+    // Draw an animated frame to keep the WebRTC pipeline "active"
+    let tick = 0;
+    const interval = setInterval(() => {
+      if (!ctx) { clearInterval(interval); return; }
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0,0,320,240);
+      ctx.fillStyle = '#050505';
+      // Moving pixel ensures frame updates are detected
+      ctx.fillRect(tick % 320, 10, 2, 2);
+      tick++;
+    }, 1000 / 5);
+
+    const stream = (canvas as any).captureStream(5);
+    const track = stream.getVideoTracks()[0];
+    const originalStop = track.stop.bind(track);
+    track.stop = () => {
+      clearInterval(interval);
+      originalStop();
+    };
+    return track;
   };
 
   const createSilentAudioTrack = () => {
@@ -188,7 +224,7 @@ const App: React.FC = () => {
     releaseWakeLock();
     if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
     if (localMicStreamRef.current) localMicStreamRef.current.getTracks().forEach(t => t.stop());
-    if (remoteStreamRef.current) remoteStreamRef.current.getTracks().forEach(t => t.stop());
+    setRemoteStream(null);
 
     if (activeCallRef.current) activeCallRef.current.close();
     if (dataConnRef.current) dataConnRef.current.close();
@@ -197,7 +233,6 @@ const App: React.FC = () => {
     peerRef.current = null;
     localStreamRef.current = null;
     localMicStreamRef.current = null;
-    remoteStreamRef.current = null;
     activeCallRef.current = null;
     dataConnRef.current = null;
 
@@ -244,17 +279,12 @@ const App: React.FC = () => {
         }
         call.answer(answerStream);
         call.on('stream', (s: MediaStream) => {
-          remoteStreamRef.current = s;
-          if (mode === 'PARENT_STATION' && remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = s;
-          } else if (mode === 'BABY_STATION') {
+          console.log("Remote stream received", s.id);
+          setRemoteStream(s);
+          if (mode === 'BABY_STATION') {
              if (babyIncomingAudioRef.current) {
                babyIncomingAudioRef.current.srcObject = s;
                if (audioUnlockedRef.current) babyIncomingAudioRef.current.play().catch(() => {});
-             }
-             if (babyIncomingVideoRef.current) {
-               babyIncomingVideoRef.current.srcObject = s;
-               babyIncomingVideoRef.current.play().catch(e => console.error("Parent video autoplay failed", e));
              }
           }
           setPeerConnected(true);
@@ -347,24 +377,24 @@ const App: React.FC = () => {
       dataConnRef.current = conn;
       conn.on('open', () => setPeerConnected(true));
       conn.on('data', handleData);
+      
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: parentCameraEnabled });
       localMicStreamRef.current = stream;
       stream.getAudioTracks().forEach(t => t.enabled = false);
+      
       let videoTrack = parentCameraEnabled ? stream.getVideoTracks()[0] : createBlankVideoTrack();
+      
       if (!audioContextRef.current) audioContextRef.current = new AudioContext();
       const source = audioContextRef.current.createMediaStreamSource(stream);
       const analyser = audioContextRef.current.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
       localMicAnalyserRef.current = analyser;
+      
       const call = peerRef.current.call(targetPeerId, new MediaStream([...stream.getAudioTracks(), videoTrack]));
       activeCallRef.current = call;
       call.on('stream', (s: MediaStream) => {
-        remoteStreamRef.current = s;
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = s;
-          remoteVideoRef.current.muted = isMuted;
-        }
+        setRemoteStream(s);
         setPeerConnected(true);
         setIsConnecting(false);
       });
@@ -395,28 +425,25 @@ const App: React.FC = () => {
        try {
          let newTrack;
          if (newState) {
-           const vStream = await navigator.mediaDevices.getUserMedia({ video: true });
+           const vStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
            newTrack = vStream.getVideoTracks()[0];
-           if (localMicStreamRef.current) {
-             localMicStreamRef.current.getVideoTracks().forEach(t => {
-               localMicStreamRef.current?.removeTrack(t);
-               t.stop();
-             });
-             localMicStreamRef.current.addTrack(newTrack);
-           }
          } else {
            newTrack = createBlankVideoTrack();
-           if (localMicStreamRef.current) {
-             localMicStreamRef.current.getVideoTracks().forEach(t => {
-               localMicStreamRef.current?.removeTrack(t);
-               t.stop();
-             });
-             localMicStreamRef.current.addTrack(newTrack);
-           }
          }
+         
+         if (localMicStreamRef.current) {
+           localMicStreamRef.current.getVideoTracks().forEach(t => {
+             localMicStreamRef.current?.removeTrack(t);
+             t.stop();
+           });
+           localMicStreamRef.current.addTrack(newTrack);
+         }
+         
          const senders = activeCallRef.current.peerConnection.getSenders();
          const videoSender = senders.find((s: any) => s.track?.kind === 'video');
-         if (videoSender && newTrack) await videoSender.replaceTrack(newTrack);
+         if (videoSender && newTrack) {
+           await videoSender.replaceTrack(newTrack);
+         }
        } catch (err) { console.error("Camera Toggle Error:", err); }
     }
   };
@@ -507,7 +534,7 @@ const App: React.FC = () => {
             <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${stealthMode ? 'opacity-0' : 'opacity-100'}`} />
             
             <div className={`absolute top-16 right-4 w-36 h-48 rounded-[2rem] overflow-hidden border-2 border-white/20 bg-black shadow-2xl transition-all duration-700 ${parentVideoVisible && !stealthMode ? 'opacity-100 scale-100' : 'opacity-0 scale-50 pointer-events-none'}`}>
-               <video ref={babyIncomingVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+               <video ref={babyIncomingVideoRef} autoPlay playsInline muted className="w-full h-full object-cover bg-black" />
                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end justify-center pb-2">
                  <span className="text-[8px] font-bold uppercase tracking-widest text-white/80">Parent</span>
                </div>
