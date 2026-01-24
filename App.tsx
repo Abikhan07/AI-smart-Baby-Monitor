@@ -34,12 +34,11 @@ import { GeminiService } from './services/gemini.ts';
 
 declare const Peer: any;
 
-const NOISE_POLL_INTERVAL = 200; 
+const NOISE_POLL_INTERVAL = 250; 
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' }
+  { urls: 'stun:stun2.l.google.com:19302' }
 ];
 
 const SLEEP_PREVENT_VIDEO_B64 = "data:video/mp4;base64,AAAAHGZ0eXBtcDQyAAAAAG1wNDJpc29tYXZjMQAAAZptb292AAAAbG12aGQAAAAA190629fdOtkAAAPoAAAAKAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAGWlveHltAAAAEGJydm0AAAAAAQAAAAGhdHJhawAAAFx0a2hkAAAAAdfdOtrX3TrZAAAAAQAAAAAAAAPoAAAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAYbWRpYQAAACBtZGhkAAAAA9fdOtrX3TrZAAAALAAAABQBAAEAAAAAAAAAImhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABUW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAPNzdGJsAAAAr3N0c2QAAAAAAAAAAQAAAJ9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAKAAoABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAALWF2Y0MBQsAM/+EAFWfCwAzYAtYCAgKAAAAAAwCAAAAeBIsXhEAAAAAAGHN0dHMAAAAAAAAAAQAAAAEAAAAUAAAAFHN0c3oAAAAAAAAAAAAAAAEAAABMc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0Y28AAAAAAAAAAQAAAEwAAAAidWR0YQAAABp0cm9sAAAAAQAAAAAAAAAAAAAAAAAAAAAA";
@@ -72,7 +71,6 @@ const App: React.FC = () => {
 
   const [babyMicEnabled, setBabyMicEnabled] = useState(true);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  const [localMicVolume, setLocalMicVolume] = useState(0);
   const [parentVideoVisible, setParentVideoVisible] = useState(false);
   const [parentCameraEnabled, setParentCameraEnabled] = useState(false);
 
@@ -102,7 +100,6 @@ const App: React.FC = () => {
   const noSleepVideoRef = useRef<HTMLVideoElement>(null);
   
   const audioContextRef = useRef<AudioContext | null>(null);
-  const localMicAnalyserRef = useRef<AnalyserNode | null>(null);
   const geminiRef = useRef<GeminiService | null>(null);
   const wakeLockRef = useRef<any>(null);
 
@@ -130,19 +127,26 @@ const App: React.FC = () => {
     }
   }, [remoteStream, mode, parentVideoVisible, peerConnected]);
 
-  // Force play incoming audio when parent starts talking
+  // Force play incoming audio when parent starts talking to minimize wake-up delay
   useEffect(() => {
     if (mode === 'BABY_STATION' && isTalking && babyIncomingAudioRef.current && audioUnlockedRef.current) {
-      babyIncomingAudioRef.current.play().catch(e => console.warn("Failed to trigger talking audio:", e));
+      babyIncomingAudioRef.current.play().catch(e => console.warn("Audio trigger ignored:", e));
     }
   }, [isTalking, mode]);
+
+  const initAudioContext = () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
+        latencyHint: 'interactive' // Key for minimizing delay
+      });
+    }
+    return audioContextRef.current;
+  };
 
   // Synthesis engine for Lullabies
   const playSynthesizedLullaby = (type: string) => {
     stopLullaby();
-    if (!audioContextRef.current) audioContextRef.current = new AudioContext();
-    const ctx = audioContextRef.current;
-    
+    const ctx = initAudioContext();
     const gainNode = ctx.createGain();
     gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
     gainNode.connect(ctx.destination);
@@ -232,18 +236,14 @@ const App: React.FC = () => {
 
   const createBlankVideoTrack = () => {
     const canvas = document.createElement('canvas');
-    canvas.width = 320; canvas.height = 240;
+    canvas.width = 160; canvas.height = 120;
     const ctx = canvas.getContext('2d');
-    let tick = 0;
     const interval = setInterval(() => {
       if (!ctx) { clearInterval(interval); return; }
       ctx.fillStyle = '#000';
-      ctx.fillRect(0,0,320,240);
-      ctx.fillStyle = '#080808';
-      ctx.fillRect(tick % 320, 10, 2, 2);
-      tick++;
-    }, 200);
-    const stream = (canvas as any).captureStream(5);
+      ctx.fillRect(0,0,160,120);
+    }, 1000);
+    const stream = (canvas as any).captureStream(1);
     const track = stream.getVideoTracks()[0];
     const originalStop = track.stop.bind(track);
     track.stop = () => { clearInterval(interval); originalStop(); };
@@ -251,7 +251,7 @@ const App: React.FC = () => {
   };
 
   const createSilentAudioTrack = () => {
-    const ctx = new AudioContext();
+    const ctx = initAudioContext();
     const dst = ctx.createMediaStreamDestination();
     const track = dst.stream.getAudioTracks()[0];
     track.enabled = false; 
@@ -278,7 +278,7 @@ const App: React.FC = () => {
     const initPeer = () => {
       if (typeof Peer === 'undefined') { setTimeout(initPeer, 500); return; }
       const id = mode === 'BABY_STATION' ? Math.floor(10000 + Math.random() * 90000).toString() : undefined;
-      const peer = new Peer(id, { config: { iceServers: ICE_SERVERS }, debug: 1 });
+      const peer = new Peer(id, { config: { iceServers: ICE_SERVERS }, debug: 0 });
       peerRef.current = peer;
       peer.on('open', (newId: string) => setPeerId(newId));
       peer.on('connection', (conn: any) => {
@@ -305,15 +305,15 @@ const App: React.FC = () => {
   const unlockSpeaker = async () => {
     requestWakeLock();
     try {
-      if (!audioContextRef.current) audioContextRef.current = new AudioContext();
-      if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
+      const ctx = initAudioContext();
+      if (ctx.state === 'suspended') await ctx.resume();
       setAudioUnlocked(true);
       audioUnlockedRef.current = true;
       if (babyIncomingAudioRef.current) {
         babyIncomingAudioRef.current.muted = false;
         await babyIncomingAudioRef.current.play();
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Audio unlock error:", e); }
   };
 
   const startNurseryMonitor = async (forceFacingMode?: 'user' | 'environment') => {
@@ -322,14 +322,27 @@ const App: React.FC = () => {
     const modeToUse = forceFacingMode || facingMode;
     try {
       if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
+      // Optimized constraints for real-time performance
+      // FIX: Removed 'latency' from audio constraints as it is not recognized in standard MediaTrackConstraints
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
-        video: { facingMode: modeToUse, width: { ideal: 1280 }, height: { ideal: 720 } }
+        audio: { 
+          echoCancellation: true, 
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+        video: { 
+          facingMode: modeToUse, 
+          width: { ideal: 960 }, // Reduced from 1280 for less processing latency
+          height: { ideal: 540 }, 
+          frameRate: { ideal: 24, max: 30 } 
+        }
       });
       stream.getAudioTracks().forEach(t => t.enabled = babyMicEnabled);
       localStreamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLive(true);
+      
+      // Update ongoing call if station flip happened
       if (activeCallRef.current && activeCallRef.current.peerConnection) {
         const senders = activeCallRef.current.peerConnection.getSenders();
         const videoTrack = stream.getVideoTracks()[0];
@@ -339,7 +352,8 @@ const App: React.FC = () => {
           else if (sender.track?.kind === 'audio' && audioTrack) sender.replaceTrack(audioTrack).catch(console.error);
         });
       }
-      const audioCtx = new AudioContext();
+
+      const audioCtx = initAudioContext();
       const source = audioCtx.createMediaStreamSource(stream);
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
@@ -386,13 +400,23 @@ const App: React.FC = () => {
       dataConnRef.current = conn;
       conn.on('open', () => setPeerConnected(true));
       conn.on('data', handleData);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: parentCameraEnabled });
+      
+      // FIX: Removed 'latency' from audio constraints as it is not recognized in standard MediaTrackConstraints
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: { echoCancellation: true }, 
+        video: parentCameraEnabled ? { width: 320, height: 240, frameRate: 15 } : false 
+      });
       localMicStreamRef.current = stream;
       stream.getAudioTracks().forEach(t => t.enabled = false);
+      
       let videoTrack = parentCameraEnabled ? stream.getVideoTracks()[0] : createBlankVideoTrack();
       const call = peerRef.current.call(targetPeerId, new MediaStream([...stream.getAudioTracks(), videoTrack]));
       activeCallRef.current = call;
-      call.on('stream', (s: MediaStream) => { setRemoteStream(s); setPeerConnected(true); setIsConnecting(false); });
+      call.on('stream', (s: MediaStream) => { 
+        setRemoteStream(s); 
+        setPeerConnected(true); 
+        setIsConnecting(false); 
+      });
     } catch (e) { setIsConnecting(false); setStreamError("Link failed."); }
   };
 
@@ -417,7 +441,7 @@ const App: React.FC = () => {
     if (peerConnected && activeCallRef.current?.peerConnection) {
        try {
          let newTrack = newState 
-          ? (await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })).getVideoTracks()[0]
+          ? (await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, frameRate: 15 } })).getVideoTracks()[0]
           : createBlankVideoTrack();
          const videoSender = activeCallRef.current.peerConnection.getSenders().find((s: any) => s.track?.kind === 'video');
          if (videoSender) await videoSender.replaceTrack(newTrack);
@@ -488,7 +512,6 @@ const App: React.FC = () => {
     return (
       <div className={`fixed inset-0 ${stealthMode ? 'bg-black' : 'bg-[#020617]'} flex flex-col text-white transition-colors duration-1000 overflow-hidden h-[100dvh]`}>
         <video ref={noSleepVideoRef} loop muted playsInline className="hidden"><source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" /></video>
-        {/* Baby Station Incoming Audio Element */}
         <audio ref={babyIncomingAudioRef} autoPlay playsInline muted={false} className="hidden" />
 
         {!isLive ? (
@@ -504,7 +527,6 @@ const App: React.FC = () => {
           </div>
         ) : (
           <div className="flex-1 relative overflow-hidden flex flex-col">
-            {/* Baby Station Monitor Header */}
             <div className={`absolute top-0 inset-x-0 h-16 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between px-6 z-30 transition-opacity ${stealthMode ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
                <button onClick={resetStation} className="p-3 bg-slate-900/80 rounded-xl border border-white/10 active:scale-90 shadow-xl">
                  <X className="w-5 h-5" />
@@ -578,7 +600,6 @@ const App: React.FC = () => {
     <div className="h-[100dvh] bg-black flex flex-col p-3 md:p-6 text-white overflow-hidden">
       <video ref={noSleepVideoRef} loop muted playsInline className="hidden"><source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" /></video>
       
-      {/* Header - Optimized for mobile fit */}
       <div className="flex items-center justify-between mb-3 md:mb-6 h-12 md:h-14 shrink-0 z-10 safe-top">
         <div className="flex items-center gap-3 md:gap-4">
           <button onClick={resetStation} className="p-2 md:p-3 bg-slate-900 rounded-xl md:rounded-2xl border border-slate-800 active:scale-90 transition-transform">
@@ -604,11 +625,9 @@ const App: React.FC = () => {
       <div className="flex-1 flex flex-col md:flex-row gap-3 md:gap-6 min-h-0 overflow-hidden mb-safe">
         {parentView === 'FEED' ? (
           <div className="flex-1 flex flex-col gap-3 md:gap-6 min-h-0">
-            {/* Main Video Feed Area - flexible to shrink to fit controls */}
             <div className={`flex-1 min-h-0 bg-black rounded-[1.5rem] md:rounded-[3rem] border overflow-hidden relative transition-all duration-700 shadow-2xl ${status.isCrying ? 'border-red-600 ring-4 md:ring-8 ring-red-600/10 animate-alert-border' : 'border-slate-800'}`}>
               <video ref={remoteVideoRef} autoPlay playsInline muted={isMuted} className="w-full h-full object-cover" />
               
-              {/* Floating Baby Status Overlay */}
               <div className="absolute top-4 left-4 pointer-events-none flex flex-col gap-2 z-40">
                 <div className={`px-3 py-1.5 rounded-lg flex items-center gap-2 border shadow-lg backdrop-blur-md transition-colors ${status.isCrying ? 'bg-red-600 border-red-400' : 'bg-slate-900/80 border-white/10'}`}>
                   <div className={`w-1.5 h-1.5 rounded-full ${status.isCrying ? 'bg-white animate-pulse' : 'bg-green-500'}`} />
@@ -644,10 +663,8 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {/* Bottom Controls Area - strictly sized to prevent screen overflow */}
             <div className="h-32 md:h-44 grid grid-cols-2 gap-3 md:gap-4 shrink-0 pb-safe">
               <div className="flex flex-col gap-2 md:gap-3">
-                {/* Push to Talk Master Trigger */}
                 <button 
                   onMouseDown={() => { setParentMic(true); unlockSpeaker(); }} onMouseUp={() => setParentMic(false)} onMouseLeave={() => setParentMic(false)}
                   onTouchStart={(e) => { e.preventDefault(); setParentMic(true); unlockSpeaker(); }} onTouchEnd={(e) => { e.preventDefault(); setParentMic(false); }}
@@ -688,7 +705,6 @@ const App: React.FC = () => {
           </div>
         ) : (
           <div className="flex-1 bg-slate-900/20 backdrop-blur-xl rounded-[1.5rem] md:rounded-[3rem] border border-slate-800 p-4 md:p-6 flex flex-col lg:flex-row gap-4 md:gap-6 overflow-hidden min-h-0">
-            {/* AI Insights and Chat UI */}
             <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4 md:space-y-6 min-h-0">
               <div className="bg-slate-900/60 p-6 md:p-10 rounded-[1.5rem] md:rounded-[2.5rem] text-center border border-slate-800 shadow-2xl">
                 <BrainCircuit className="w-10 h-10 md:w-12 md:h-12 text-blue-500 mx-auto mb-4 md:mb-6" />
@@ -705,7 +721,6 @@ const App: React.FC = () => {
                   <div className="bg-slate-900/60 p-5 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-800 shadow-lg">
                     <h4 className="text-[9px] md:text-[11px] font-bold text-blue-500 uppercase tracking-widest mb-4 flex items-center gap-3"><Sparkles className="w-4 h-4" /> System Insight</h4>
                     <p className="text-slate-200 text-xs md:text-sm leading-relaxed font-medium">{analysisResult.summary}</p>
-                    {/* Visualizations rendering... */}
                   </div>
                 </div>
               )}
@@ -732,7 +747,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Cry alert footer for Parent View AI Insights tab */}
       {parentView !== 'FEED' && status.isCrying && (
         <div className="mt-2 lg:hidden bg-red-600 text-white px-4 py-2.5 rounded-xl flex items-center justify-center gap-3 animate-pulse border border-red-400 shadow-lg shrink-0">
            <Baby className="w-4 h-4" />
