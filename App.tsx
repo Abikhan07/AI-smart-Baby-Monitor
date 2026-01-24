@@ -342,7 +342,6 @@ const App: React.FC = () => {
     } catch (e) { setStreamError("Access denied."); }
   };
 
-  // Fix: Added toggleBabyMic to handle microphone muting in the nursery
   const toggleBabyMic = () => {
     const newState = !babyMicEnabled;
     setBabyMicEnabled(newState);
@@ -351,7 +350,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Fix: Added flipCamera to switch between front and back cameras
   const flipCamera = () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newMode);
@@ -437,27 +435,27 @@ const App: React.FC = () => {
 
   if (mode === 'ROLE_SELECTION') {
     return (
-      <div className="min-h-screen w-full bg-black flex flex-col items-center justify-center p-6 text-white text-center">
-        <div className="mb-12">
-          <div className="w-20 h-20 bg-blue-600 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 shadow-2xl">
-            <Baby className="w-10 h-10 text-white" />
+      <div className="h-[100dvh] w-full bg-black flex flex-col items-center justify-center p-6 text-white text-center">
+        <div className="mb-8 md:mb-12">
+          <div className="w-16 h-16 md:w-20 md:h-20 bg-blue-600 rounded-[2rem] flex items-center justify-center mx-auto mb-6 md:mb-8 shadow-2xl">
+            <Baby className="w-8 h-8 md:w-10 md:h-10 text-white" />
           </div>
-          <h1 className="text-4xl font-bold tracking-tighter mb-3">Lullaby AI</h1>
-          <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.3em]">Smart Monitoring Node</p>
+          <h1 className="text-3xl md:text-4xl font-bold tracking-tighter mb-2 md:mb-3">Lullaby AI</h1>
+          <p className="text-slate-500 text-[9px] md:text-[10px] font-bold uppercase tracking-[0.3em]">Smart Monitoring Node</p>
         </div>
-        <div className="grid grid-cols-1 gap-4 w-full max-w-sm">
-          <button onClick={() => setMode('BABY_STATION')} className="bg-slate-900 border border-slate-800 p-8 rounded-[2rem] flex flex-col items-center gap-4 transition-all active:scale-95 shadow-lg group">
-            <Smartphone className="w-8 h-8 text-blue-500 group-hover:scale-110 transition-transform" />
+        <div className="grid grid-cols-1 gap-3 md:gap-4 w-full max-w-sm px-4">
+          <button onClick={() => setMode('BABY_STATION')} className="bg-slate-900 border border-slate-800 p-6 md:p-8 rounded-[1.5rem] md:rounded-[2rem] flex flex-col items-center gap-3 transition-all active:scale-95 shadow-lg group">
+            <Smartphone className="w-6 h-6 md:w-8 md:h-8 text-blue-500 group-hover:scale-110 transition-transform" />
             <div className="text-left w-full">
-              <h3 className="text-lg font-bold uppercase tracking-tight">Baby Unit</h3>
-              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mt-1">Deploy in nursery</p>
+              <h3 className="text-base md:text-lg font-bold uppercase tracking-tight">Baby Unit</h3>
+              <p className="text-slate-500 text-[9px] font-bold uppercase tracking-widest mt-1">Deploy in nursery</p>
             </div>
           </button>
-          <button onClick={() => setMode('PARENT_STATION')} className="bg-slate-900 border border-slate-800 p-8 rounded-[2rem] flex flex-col items-center gap-4 transition-all active:scale-95 shadow-lg group">
-            <Monitor className="w-8 h-8 text-indigo-500 group-hover:scale-110 transition-transform" />
+          <button onClick={() => setMode('PARENT_STATION')} className="bg-slate-900 border border-slate-800 p-6 md:p-8 rounded-[1.5rem] md:rounded-[2rem] flex flex-col items-center gap-3 transition-all active:scale-95 shadow-lg group">
+            <Monitor className="w-6 h-6 md:w-8 md:h-8 text-indigo-500 group-hover:scale-110 transition-transform" />
             <div className="text-left w-full">
-              <h3 className="text-lg font-bold uppercase tracking-tight">Parent Unit</h3>
-              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mt-1">Master control hub</p>
+              <h3 className="text-base md:text-lg font-bold uppercase tracking-tight">Parent Unit</h3>
+              <p className="text-slate-500 text-[9px] font-bold uppercase tracking-widest mt-1">Master control hub</p>
             </div>
           </button>
         </div>
@@ -467,72 +465,72 @@ const App: React.FC = () => {
 
   if (mode === 'BABY_STATION') {
     return (
-      <div className={`fixed inset-0 ${stealthMode ? 'bg-black' : 'bg-[#020617]'} flex flex-col text-white transition-colors duration-1000 overflow-hidden`}>
+      <div className={`fixed inset-0 ${stealthMode ? 'bg-black' : 'bg-[#020617]'} flex flex-col text-white transition-colors duration-1000 overflow-hidden h-[100dvh]`}>
         <video ref={noSleepVideoRef} loop muted playsInline className="hidden"><source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" /></video>
         {!isLive ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6">
-            <div className="bg-slate-900/50 p-10 rounded-[2.5rem] border border-slate-800 mb-10 w-full max-w-xs text-center shadow-2xl">
-              <span className="text-[10px] font-bold uppercase text-blue-500 mb-4 block tracking-widest">Nursery Node ID</span>
-              <div className="text-6xl font-mono font-bold tracking-tighter text-white">{peerId || '-----'}</div>
+            <div className="bg-slate-900/50 p-8 md:p-10 rounded-[2rem] border border-slate-800 mb-8 md:mb-10 w-full max-w-xs text-center shadow-2xl">
+              <span className="text-[9px] md:text-[10px] font-bold uppercase text-blue-500 mb-4 block tracking-widest">Nursery Node ID</span>
+              <div className="text-5xl md:text-6xl font-mono font-bold tracking-tighter text-white">{peerId || '-----'}</div>
             </div>
-            <button onClick={() => startNurseryMonitor()} className="bg-blue-600 w-full max-w-xs py-6 rounded-[2rem] font-bold text-sm uppercase tracking-widest flex items-center justify-center gap-4 active:scale-95 shadow-2xl">
+            <button onClick={() => startNurseryMonitor()} className="bg-blue-600 w-full max-w-xs py-5 md:py-6 rounded-[1.5rem] md:rounded-[2rem] font-bold text-sm uppercase tracking-widest flex items-center justify-center gap-4 active:scale-95 shadow-2xl">
               <Power className="w-5 h-5" /> Start Node
             </button>
-            <button onClick={() => setMode('ROLE_SELECTION')} className="mt-12 text-slate-500 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2"><ChevronLeft className="w-3 h-3" /> System Menu</button>
+            <button onClick={() => setMode('ROLE_SELECTION')} className="mt-8 md:mt-12 text-slate-500 text-[9px] md:text-[10px] font-bold uppercase tracking-widest flex items-center gap-2"><ChevronLeft className="w-3 h-3" /> System Menu</button>
           </div>
         ) : (
           <div className="flex-1 relative overflow-hidden">
             <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${stealthMode ? 'opacity-0' : 'opacity-100'}`} />
             
-            <div className={`absolute top-16 right-4 w-40 h-56 rounded-[2.5rem] overflow-hidden border-2 border-white/10 bg-black shadow-2xl transition-all duration-700 ${parentVideoVisible && !stealthMode ? 'opacity-100 scale-100' : 'opacity-0 scale-50 pointer-events-none'}`}>
+            <div className={`absolute top-16 right-4 w-32 h-44 md:w-40 md:h-56 rounded-[2rem] md:rounded-[2.5rem] overflow-hidden border-2 border-white/10 bg-black shadow-2xl transition-all duration-700 ${parentVideoVisible && !stealthMode ? 'opacity-100 scale-100' : 'opacity-0 scale-50 pointer-events-none'}`}>
                <video ref={babyIncomingVideoRef} autoPlay playsInline muted className="w-full h-full object-cover bg-black" />
             </div>
 
             {activeLullaby && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none flex flex-col items-center gap-6">
-                <div className="w-24 h-24 bg-blue-600/30 backdrop-blur-3xl rounded-full flex items-center justify-center animate-pulse">
-                  <Music className="w-10 h-10 text-blue-400" />
+                <div className="w-20 h-20 md:w-24 md:h-24 bg-blue-600/30 backdrop-blur-3xl rounded-full flex items-center justify-center animate-pulse">
+                  <Music className="w-8 h-8 md:w-10 md:h-10 text-blue-400" />
                 </div>
-                {!stealthMode && <p className="text-[10px] font-bold uppercase tracking-[0.5em] text-blue-400 animate-bounce">Playing Lullaby</p>}
+                {!stealthMode && <p className="text-[9px] md:text-[10px] font-bold uppercase tracking-[0.5em] text-blue-400 animate-bounce">Playing Lullaby</p>}
               </div>
             )}
 
             {!audioUnlocked && !stealthMode && (
-              <div className="absolute inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-10 text-center backdrop-blur-sm">
-                <Volume2 className="w-12 h-12 text-blue-500 mb-8 animate-pulse" />
-                <h3 className="text-2xl font-bold mb-4 uppercase tracking-tight">Audio Protocol</h3>
-                <p className="text-slate-400 text-sm mb-12 max-w-[280px] leading-relaxed">System requires manual initialization to activate synthesized audio and remote talkback.</p>
-                <button onClick={unlockSpeaker} className="bg-blue-600 w-full max-w-xs py-5 rounded-[1.5rem] font-bold uppercase text-[11px] tracking-widest active:scale-95 shadow-xl">Activate Hardware</button>
+              <div className="absolute inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-8 md:p-10 text-center backdrop-blur-sm">
+                <Volume2 className="w-10 h-10 md:w-12 md:h-12 text-blue-500 mb-6 md:mb-8 animate-pulse" />
+                <h3 className="text-xl md:text-2xl font-bold mb-4 uppercase tracking-tight">Audio Protocol</h3>
+                <p className="text-slate-400 text-[11px] md:text-sm mb-10 md:mb-12 max-w-[280px] leading-relaxed">System requires manual initialization to activate synthesized audio and remote talkback.</p>
+                <button onClick={unlockSpeaker} className="bg-blue-600 w-full max-w-xs py-4 md:py-5 rounded-[1.5rem] font-bold uppercase text-[10px] md:text-[11px] tracking-widest active:scale-95 shadow-xl">Activate Hardware</button>
               </div>
             )}
 
             {isTalking && !stealthMode && (
               <div className="absolute inset-0 bg-blue-600/10 backdrop-blur-md flex items-center justify-center z-40">
-                <div className="bg-blue-600 px-10 py-6 rounded-[2.5rem] flex items-center gap-4 shadow-2xl animate-bounce border border-white/20">
-                  <Mic className="w-8 h-8" />
-                  <span className="font-bold uppercase tracking-widest text-[12px]">Parent Online</span>
+                <div className="bg-blue-600 px-8 py-5 md:px-10 md:py-6 rounded-[2rem] md:rounded-[2.5rem] flex items-center gap-4 shadow-2xl animate-bounce border border-white/20">
+                  <Mic className="w-6 h-6 md:w-8 md:h-8" />
+                  <span className="font-bold uppercase tracking-widest text-[10px] md:text-[12px]">Parent Online</span>
                 </div>
               </div>
             )}
 
-            <div className={`absolute bottom-10 inset-x-0 flex items-center justify-center gap-4 transition-all ${stealthMode ? 'opacity-0 translate-y-10 pointer-events-none' : 'opacity-100'}`}>
-              <div className="bg-slate-900/90 backdrop-blur-3xl p-4 rounded-[3rem] flex items-center gap-4 border border-white/10 shadow-2xl">
-                <button onClick={toggleBabyMic} className={`p-6 rounded-[1.5rem] transition-all active:scale-90 ${babyMicEnabled ? 'bg-slate-800' : 'bg-red-600'}`}>
-                  {babyMicEnabled ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
+            <div className={`absolute bottom-8 md:bottom-10 inset-x-0 flex items-center justify-center gap-3 md:gap-4 transition-all ${stealthMode ? 'opacity-0 translate-y-10 pointer-events-none' : 'opacity-100'}`}>
+              <div className="bg-slate-900/90 backdrop-blur-3xl p-3 md:p-4 rounded-[2.5rem] md:rounded-[3rem] flex items-center gap-3 md:gap-4 border border-white/10 shadow-2xl">
+                <button onClick={toggleBabyMic} className={`p-4 md:p-6 rounded-[1.2rem] md:rounded-[1.5rem] transition-all active:scale-90 ${babyMicEnabled ? 'bg-slate-800' : 'bg-red-600'}`}>
+                  {babyMicEnabled ? <Mic className="w-5 h-5 md:w-6 md:h-6" /> : <MicOff className="w-5 h-5 md:w-6 md:h-6" />}
                 </button>
-                <button onClick={flipCamera} className="p-6 rounded-[1.5rem] bg-slate-800 active:scale-90">
-                  <SwitchCamera className="w-6 h-6" />
+                <button onClick={flipCamera} className="p-4 md:p-6 rounded-[1.2rem] md:rounded-[1.5rem] bg-slate-800 active:scale-90">
+                  <SwitchCamera className="w-5 h-5 md:w-6 md:h-6" />
                 </button>
-                <button onClick={() => setStealthMode(true)} className="px-10 py-6 rounded-[1.5rem] bg-blue-600 font-bold text-[11px] uppercase tracking-widest flex items-center gap-3 active:scale-95">
-                  <Lock className="w-4 h-4" /> Stealth
+                <button onClick={() => setStealthMode(true)} className="px-6 md:px-10 py-4 md:py-6 rounded-[1.2rem] md:rounded-[1.5rem] bg-blue-600 font-bold text-[9px] md:text-[11px] uppercase tracking-widest flex items-center gap-3 active:scale-95">
+                  <Lock className="w-3 h-3 md:w-4 md:h-4" /> Stealth
                 </button>
               </div>
             </div>
             
             {stealthMode && (
               <div className="absolute inset-0 bg-black flex flex-col items-center justify-center cursor-pointer" onDoubleClick={() => setStealthMode(false)}>
-                <Lock className="w-16 h-16 text-white/5 mb-8" />
-                <p className="text-white/10 font-bold uppercase tracking-[0.5em] text-center text-[10px]">Active Secure Stream</p>
+                <Lock className="w-12 h-12 md:w-16 md:h-16 text-white/5 mb-6 md:mb-8" />
+                <p className="text-white/10 font-bold uppercase tracking-[0.5em] text-center text-[9px] md:text-[10px]">Active Secure Stream</p>
               </div>
             )}
           </div>
@@ -542,100 +540,111 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-black flex flex-col p-4 md:p-6 text-white overflow-hidden">
+    <div className="h-[100dvh] bg-black flex flex-col p-3 md:p-6 text-white overflow-hidden">
       <video ref={noSleepVideoRef} loop muted playsInline className="hidden"><source src={SLEEP_PREVENT_VIDEO_B64} type="video/mp4" /></video>
-      <div className="flex items-center justify-between mb-8 h-14 shrink-0 z-10 safe-top">
-        <div className="flex items-center gap-4">
-          <button onClick={resetStation} className="p-3 bg-slate-900 rounded-2xl border border-slate-800 active:scale-90 transition-transform">
-            <ChevronLeft className="w-6 h-6 text-slate-400" />
+      
+      {/* Header - more compact on mobile */}
+      <div className="flex items-center justify-between mb-3 md:mb-6 h-12 md:h-14 shrink-0 z-10 safe-top">
+        <div className="flex items-center gap-3 md:gap-4">
+          <button onClick={resetStation} className="p-2 md:p-3 bg-slate-900 rounded-xl md:rounded-2xl border border-slate-800 active:scale-90 transition-transform">
+            <ChevronLeft className="w-5 h-5 md:w-6 md:h-6 text-slate-400" />
           </button>
           <div>
-            <h2 className="text-lg font-bold tracking-tight mb-0.5 uppercase">Nursery Hub</h2>
-            <div className="flex items-center gap-2">
-              <Signal className={`w-3 h-3 ${peerConnected ? 'text-green-500' : 'text-slate-700'}`} />
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                {peerConnected ? 'Secure Protocol Active' : 'Offline'}
+            <h2 className="text-sm md:text-lg font-bold tracking-tight uppercase">Hub</h2>
+            <div className="flex items-center gap-1.5 md:gap-2">
+              <Signal className={`w-2.5 h-2.5 md:w-3 md:h-3 ${peerConnected ? 'text-green-500' : 'text-slate-700'}`} />
+              <span className="text-[8px] md:text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                {peerConnected ? 'Active' : 'Offline'}
               </span>
             </div>
           </div>
         </div>
         
-        <div className="flex bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800 backdrop-blur-2xl shadow-xl">
-          <button onClick={() => setParentView('FEED')} className={`px-6 py-3 rounded-xl text-[10px] font-bold transition-all uppercase tracking-[0.1em] ${parentView === 'FEED' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Live Feed</button>
-          <button onClick={() => setParentView('AI_INSIGHTS')} className={`px-6 py-3 rounded-xl text-[10px] font-bold transition-all uppercase tracking-[0.1em] ${parentView === 'AI_INSIGHTS' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>AI Health</button>
+        <div className="flex bg-slate-900/80 p-1 rounded-xl md:rounded-2xl border border-slate-800 backdrop-blur-2xl shadow-xl shrink-0">
+          <button onClick={() => setParentView('FEED')} className={`px-4 md:px-6 py-2 md:py-3 rounded-lg md:rounded-xl text-[8px] md:text-[10px] font-bold transition-all uppercase tracking-widest ${parentView === 'FEED' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>Feed</button>
+          <button onClick={() => setParentView('AI_INSIGHTS')} className={`px-4 md:px-6 py-2 md:py-3 rounded-lg md:rounded-xl text-[8px] md:text-[10px] font-bold transition-all uppercase tracking-widest ${parentView === 'AI_INSIGHTS' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>AI</button>
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col md:flex-row gap-6 min-h-0 overflow-hidden mb-safe">
+      <div className="flex-1 flex flex-col md:flex-row gap-3 md:gap-6 min-h-0 overflow-hidden mb-safe">
         {parentView === 'FEED' ? (
-          <div className="flex-1 flex flex-col gap-6">
-            <div className={`flex-1 bg-black rounded-[3rem] border overflow-hidden relative transition-all duration-700 shadow-2xl ${status.isCrying ? 'border-red-600 ring-8 ring-red-600/10 animate-alert-border' : 'border-slate-800'}`}>
+          <div className="flex-1 flex flex-col gap-3 md:gap-6 min-h-0">
+            {/* Video Feed Area - flexible to shrink/grow */}
+            <div className={`flex-1 min-h-0 bg-black rounded-[1.5rem] md:rounded-[3rem] border overflow-hidden relative transition-all duration-700 shadow-2xl ${status.isCrying ? 'border-red-600 ring-4 md:ring-8 ring-red-600/10 animate-alert-border' : 'border-slate-800'}`}>
               <video ref={remoteVideoRef} autoPlay playsInline muted={isMuted} className="w-full h-full object-cover" />
               
+              {/* Overlay for Baby Status on Mobile */}
+              <div className="absolute top-4 left-4 pointer-events-none flex flex-col gap-2 z-40">
+                <div className={`px-3 py-1.5 rounded-lg flex items-center gap-2 border shadow-lg backdrop-blur-md transition-colors ${status.isCrying ? 'bg-red-600 border-red-400' : 'bg-slate-900/80 border-white/10'}`}>
+                  <div className={`w-1.5 h-1.5 rounded-full ${status.isCrying ? 'bg-white animate-pulse' : 'bg-green-500'}`} />
+                  <span className="text-[8px] md:text-[10px] font-bold uppercase tracking-wider">{status.isCrying ? 'Crying Detected' : 'Quiet'}</span>
+                </div>
+                <div className="bg-slate-900/60 backdrop-blur-md px-3 py-1.5 rounded-lg text-[8px] md:text-[10px] font-bold uppercase tracking-wider border border-white/10 flex items-center gap-2">
+                   <Activity className="w-2.5 h-2.5 text-blue-500" /> {status.noiseLevel}%
+                </div>
+              </div>
+
               {peerConnected && isMuted && (
                 <div onClick={() => { setIsMuted(false); requestWakeLock(); }} className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md cursor-pointer z-20">
-                  <div className="bg-blue-600 p-8 rounded-[2.5rem] mb-6 shadow-2xl active:scale-90"><VolumeX className="w-10 h-10 text-white" /></div>
-                  <p className="text-white font-bold uppercase tracking-[0.3em] text-[11px]">Activate Monitoring Stream</p>
+                  <div className="bg-blue-600 p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] mb-4 md:mb-6 shadow-2xl active:scale-90"><VolumeX className="w-8 h-8 md:w-10 md:h-10 text-white" /></div>
+                  <p className="text-white font-bold uppercase tracking-[0.2em] text-[9px] md:text-[11px]">Unmute Monitor</p>
                 </div>
               )}
               
               {!peerConnected && !isConnecting && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-10 bg-black/95 text-center z-30 backdrop-blur-sm">
-                  <Smartphone className="w-16 h-16 text-blue-500 mb-8" />
-                  <h3 className="text-2xl font-bold mb-6 uppercase tracking-tight">Sync Protocol</h3>
-                  <div className="w-full max-w-xs flex flex-col gap-4">
-                    <input type="text" maxLength={5} placeholder="00000" value={targetPeerId} onChange={(e)=>setTargetPeerId(e.target.value.replace(/\D/g,''))} className="bg-slate-900 border border-slate-800 rounded-2xl px-8 py-6 text-center text-5xl font-mono font-bold text-blue-500 focus:border-blue-500 outline-none transition-colors shadow-inner" />
-                    <button onClick={linkToNursery} className="bg-blue-600 py-6 rounded-2xl font-bold uppercase text-[12px] tracking-widest active:scale-95 shadow-2xl transition-all">Link Nursery Unit</button>
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 md:p-10 bg-black/95 text-center z-30 backdrop-blur-sm">
+                  <Smartphone className="w-12 h-12 md:w-16 md:h-16 text-blue-500 mb-6 md:mb-8" />
+                  <h3 className="text-lg md:text-2xl font-bold mb-4 md:mb-6 uppercase tracking-tight">Sync</h3>
+                  <div className="w-full max-w-[240px] md:max-w-xs flex flex-col gap-3">
+                    <input type="text" maxLength={5} placeholder="00000" value={targetPeerId} onChange={(e)=>setTargetPeerId(e.target.value.replace(/\D/g,''))} className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-4 md:px-8 md:py-6 text-center text-3xl md:text-5xl font-mono font-bold text-blue-500 focus:border-blue-500 outline-none transition-colors shadow-inner" />
+                    <button onClick={linkToNursery} className="bg-blue-600 py-4 md:py-6 rounded-xl md:rounded-2xl font-bold uppercase text-[10px] md:text-[12px] tracking-widest active:scale-95 shadow-2xl">Connect Unit</button>
                   </div>
                 </div>
               )}
 
               {peerConnected && !isMuted && (
-                <div className="absolute top-6 left-6 right-6 flex justify-between items-start pointer-events-none">
-                   <div className="bg-red-600/80 backdrop-blur-md px-4 py-2 rounded-xl flex items-center gap-2 border border-red-400/50 shadow-lg">
-                      <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                      <span className="text-[10px] font-bold uppercase tracking-wider">Secure Live</span>
-                   </div>
-                   <button onClick={() => setIsMuted(true)} className="p-4 rounded-2xl bg-slate-900/80 backdrop-blur-md border border-white/10 pointer-events-auto active:scale-90"><Volume2 className="w-5 h-5" /></button>
-                </div>
+                <button onClick={() => setIsMuted(true)} className="absolute top-4 right-4 p-3 md:p-4 rounded-xl md:rounded-2xl bg-slate-900/80 backdrop-blur-md border border-white/10 active:scale-90 z-40">
+                  <Volume2 className="w-4 h-4 md:w-5 md:h-5" />
+                </button>
               )}
             </div>
 
-            <div className="h-44 grid grid-cols-2 gap-4 shrink-0 pb-safe">
-              <div className="flex flex-col gap-3">
+            {/* Controls Area - more compact to ensure push-to-talk visibility */}
+            <div className="h-32 md:h-44 grid grid-cols-2 gap-3 md:gap-4 shrink-0 pb-safe">
+              <div className="flex flex-col gap-2 md:gap-3">
+                {/* Push to Talk Button - ensured to be within h-32/44 */}
                 <button 
                   onMouseDown={() => { setParentMic(true); requestWakeLock(); }} onMouseUp={() => setParentMic(false)} onMouseLeave={() => setParentMic(false)}
                   onTouchStart={(e) => { e.preventDefault(); setParentMic(true); requestWakeLock(); }} onTouchEnd={(e) => { e.preventDefault(); setParentMic(false); }}
-                  className={`flex-1 rounded-[2.5rem] border transition-all flex flex-col items-center justify-center gap-3 active:scale-[0.97] ${isTalking ? 'bg-blue-600 border-blue-400 shadow-2xl' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
+                  className={`flex-1 rounded-[1.2rem] md:rounded-[2.5rem] border transition-all flex flex-col items-center justify-center gap-2 active:scale-[0.97] ${isTalking ? 'bg-blue-600 border-blue-400 shadow-2xl' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
                 >
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${isTalking ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-500'}`}>
-                    {isTalking ? <Mic className="w-6 h-6 animate-pulse" /> : <MicOff className="w-6 h-6" />}
+                  <div className={`w-8 h-8 md:w-12 md:h-12 rounded-xl flex items-center justify-center transition-all ${isTalking ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-500'}`}>
+                    {isTalking ? <Mic className="w-5 h-5 md:w-6 md:h-6 animate-pulse" /> : <MicOff className="w-5 h-5 md:w-6 md:h-6" />}
                   </div>
-                  <span className={`text-[10px] font-bold uppercase tracking-widest ${isTalking ? 'text-white' : 'text-slate-500'}`}>Remote Talk</span>
+                  <span className={`text-[8px] md:text-[10px] font-bold uppercase tracking-widest ${isTalking ? 'text-white' : 'text-slate-500'}`}>Talk Node</span>
                 </button>
                 <button 
                   onClick={() => { toggleParentCamera(); requestWakeLock(); }}
-                  className={`h-16 rounded-[1.5rem] border transition-all flex items-center justify-center gap-3 active:scale-[0.97] ${parentCameraEnabled ? 'bg-indigo-600 border-indigo-400' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
+                  className={`h-12 md:h-16 rounded-[1rem] md:rounded-[1.5rem] border transition-all flex items-center justify-center gap-2 md:gap-3 active:scale-[0.97] ${parentCameraEnabled ? 'bg-indigo-600 border-indigo-400' : 'bg-slate-900/60 border-slate-800'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
                 >
-                  {parentCameraEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5 text-slate-500" />}
-                  <span className="text-[9px] font-bold uppercase tracking-widest">{parentCameraEnabled ? 'Camera On' : 'Camera Off'}</span>
+                  {parentCameraEnabled ? <Video className="w-4 h-4 md:w-5 md:h-5" /> : <VideoOff className="w-4 h-4 md:w-5 md:h-5 text-slate-500" />}
+                  <span className="text-[7px] md:text-[9px] font-bold uppercase tracking-widest hidden xs:inline">{parentCameraEnabled ? 'Camera On' : 'Camera Off'}</span>
                 </button>
               </div>
 
-              <div className="bg-slate-900/40 rounded-[2.5rem] border border-slate-800 p-4 flex flex-col gap-2 overflow-y-auto custom-scrollbar">
-                <span className="text-[9px] font-bold uppercase text-slate-500 tracking-widest px-2 mb-1">Lullaby Remote</span>
+              <div className="bg-slate-900/40 rounded-[1.2rem] md:rounded-[2.5rem] border border-slate-800 p-3 md:p-4 flex flex-col gap-1.5 md:gap-2 overflow-y-auto custom-scrollbar">
+                <span className="text-[7px] md:text-[9px] font-bold uppercase text-slate-500 tracking-widest px-1 mb-1">Lullabies</span>
                 {LULLABIES.map(l => (
                   <button 
                     key={l.id} 
                     onClick={() => triggerRemoteLullaby(l.id)} 
-                    className={`p-3 rounded-2xl flex items-center gap-3 transition-all border ${activeLullaby === l.id ? 'bg-blue-600 border-blue-400' : 'bg-slate-800/50 border-transparent hover:border-slate-700'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
+                    className={`p-2 md:p-3 rounded-lg md:rounded-2xl flex items-center gap-2 md:gap-3 transition-all border ${activeLullaby === l.id ? 'bg-blue-600 border-blue-400' : 'bg-slate-800/50 border-transparent'} ${!peerConnected && 'opacity-20 pointer-events-none'}`}
                   >
-                    <div className="w-8 h-8 bg-black/20 rounded-xl flex items-center justify-center">
-                      {l.id === 'calm' ? <Wind className="w-4 h-4" /> : l.id === 'nature' ? <Moon className="w-4 h-4" /> : <Music className="w-4 h-4" />}
+                    <div className="w-6 h-6 md:w-8 md:h-8 bg-black/20 rounded-lg flex items-center justify-center">
+                      {l.id === 'calm' ? <Wind className="w-3.5 h-3.5 md:w-4 md:h-4" /> : l.id === 'nature' ? <Moon className="w-3.5 h-3.5 md:w-4 md:h-4" /> : <Music className="w-3.5 h-3.5 md:w-4 md:h-4" />}
                     </div>
-                    <div className="text-left">
-                      <h4 className="text-[10px] font-bold uppercase leading-tight">{l.name}</h4>
-                      <p className="text-[8px] text-white/40 truncate w-24">Synthesized</p>
+                    <div className="text-left overflow-hidden">
+                      <h4 className="text-[7px] md:text-[10px] font-bold uppercase leading-tight truncate">{l.name}</h4>
                     </div>
                   </button>
                 ))}
@@ -643,35 +652,35 @@ const App: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div className="flex-1 bg-slate-900/20 backdrop-blur-xl rounded-[3rem] border border-slate-800 p-6 flex flex-col lg:flex-row gap-6 overflow-hidden">
-            <div className="flex-[1.2] overflow-y-auto custom-scrollbar pr-3 pb-safe space-y-6">
-              <div className="bg-slate-900/60 p-10 rounded-[2.5rem] text-center border border-slate-800 shadow-2xl group">
-                <BrainCircuit className="w-12 h-12 text-blue-500 mx-auto mb-6 group-hover:scale-110 transition-transform" />
-                <h3 className="text-xl font-bold mb-4 tracking-tight uppercase">AI Health Scanner</h3>
-                <p className="text-slate-500 text-[11px] mb-12 font-medium leading-relaxed uppercase tracking-widest">Upload Sleep logs or Health Photos</p>
-                <input type="file" onChange={onFileUpload} className="hidden" id="file-hub-v4" />
-                <label htmlFor="file-hub-v4" className="bg-blue-600 w-full py-6 rounded-[1.5rem] font-bold uppercase text-[11px] tracking-[0.2em] flex items-center justify-center gap-4 cursor-pointer active:scale-95 shadow-xl transition-all">
-                  <Upload className="w-5 h-5" /> {isAnalyzing ? 'SYNTHESIZING DATA...' : 'SCAN DOCUMENT'}
+          <div className="flex-1 bg-slate-900/20 backdrop-blur-xl rounded-[1.5rem] md:rounded-[3rem] border border-slate-800 p-4 md:p-6 flex flex-col lg:flex-row gap-4 md:gap-6 overflow-hidden min-h-0">
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4 md:space-y-6 min-h-0">
+              <div className="bg-slate-900/60 p-6 md:p-10 rounded-[1.5rem] md:rounded-[2.5rem] text-center border border-slate-800 shadow-2xl">
+                <BrainCircuit className="w-10 h-10 md:w-12 md:h-12 text-blue-500 mx-auto mb-4 md:mb-6" />
+                <h3 className="text-base md:text-xl font-bold mb-2 md:mb-4 tracking-tight uppercase">Health Scan</h3>
+                <p className="text-slate-500 text-[9px] md:text-[11px] mb-6 md:mb-12 font-medium leading-relaxed uppercase tracking-widest">Logs or Photos</p>
+                <input type="file" onChange={onFileUpload} className="hidden" id="file-hub-v5" />
+                <label htmlFor="file-hub-v5" className="bg-blue-600 w-full py-4 md:py-6 rounded-[1.2rem] md:rounded-[1.5rem] font-bold uppercase text-[9px] md:text-[11px] tracking-widest flex items-center justify-center gap-3 cursor-pointer active:scale-95 shadow-xl transition-all">
+                  <Upload className="w-4 h-4 md:w-5 md:h-5" /> {isAnalyzing ? 'Scanning...' : 'Upload'}
                 </label>
               </div>
               
               {analysisResult && (
-                <div className="space-y-6">
-                  <div className="bg-slate-900/60 p-8 rounded-[2.5rem] border border-slate-800 shadow-lg">
-                    <h4 className="text-[11px] font-bold text-blue-500 uppercase tracking-[0.3em] mb-6 flex items-center gap-3"><Sparkles className="w-4 h-4" /> System Summary</h4>
-                    <p className="text-slate-200 text-sm leading-relaxed font-medium">{analysisResult.summary}</p>
+                <div className="space-y-4 md:space-y-6 pb-6">
+                  <div className="bg-slate-900/60 p-5 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-800 shadow-lg">
+                    <h4 className="text-[9px] md:text-[11px] font-bold text-blue-500 uppercase tracking-widest mb-4 flex items-center gap-3"><Sparkles className="w-4 h-4" /> Insight</h4>
+                    <p className="text-slate-200 text-xs md:text-sm leading-relaxed font-medium">{analysisResult.summary}</p>
                     
                     {analysisResult.visualizations?.map((viz, vIdx) => (
-                      <div key={vIdx} className="mt-8">
-                         <h5 className="text-[9px] font-bold uppercase text-slate-500 mb-4 tracking-widest">{viz.label}</h5>
-                         <div className="flex items-end gap-2 h-32">
+                      <div key={vIdx} className="mt-6">
+                         <h5 className="text-[8px] font-bold uppercase text-slate-500 mb-3 tracking-widest">{viz.label}</h5>
+                         <div className="flex items-end gap-1.5 h-24 md:h-32">
                            {viz.data.map((d, dIdx) => (
-                             <div key={dIdx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
+                             <div key={dIdx} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
                                 <div 
-                                  className="w-full bg-blue-600 rounded-lg transition-all duration-1000 origin-bottom hover:bg-indigo-500 shadow-lg" 
+                                  className="w-full bg-blue-600/80 rounded-sm md:rounded-lg transition-all duration-1000 origin-bottom" 
                                   style={{ height: `${(d.value / Math.max(...viz.data.map(i => i.value))) * 100}%` }} 
                                 />
-                                <span className="text-[7px] font-bold uppercase text-slate-600 group-hover:text-blue-500">{d.name}</span>
+                                <span className="text-[6px] md:text-[7px] font-bold uppercase text-slate-600 truncate w-full text-center">{d.name}</span>
                              </div>
                            ))}
                          </div>
@@ -682,40 +691,40 @@ const App: React.FC = () => {
               )}
             </div>
             
-            <div className="flex-1 bg-black/60 rounded-[3rem] border border-slate-800 flex flex-col overflow-hidden shadow-2xl mb-safe">
-               <div className="p-6 border-b border-slate-800 flex items-center gap-4 bg-slate-900/40">
-                 <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse shadow-[0_0_10px_rgba(59,130,246,0.5)]" />
-                 <span className="text-[11px] font-bold uppercase text-slate-400 tracking-[0.2em]">Pediatric Node</span>
+            <div className="flex-1 bg-black/60 rounded-[1.5rem] md:rounded-[3rem] border border-slate-800 flex flex-col overflow-hidden shadow-2xl min-h-0">
+               <div className="p-4 md:p-6 border-b border-slate-800 flex items-center gap-3 bg-slate-900/40">
+                 <div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-blue-500 animate-pulse" />
+                 <span className="text-[9px] md:text-[11px] font-bold uppercase text-slate-400 tracking-widest">Assistant</span>
                </div>
-               <div className="flex-1 p-6 space-y-6 overflow-y-auto custom-scrollbar">
+               <div className="flex-1 p-4 md:p-6 space-y-4 md:space-y-6 overflow-y-auto custom-scrollbar min-h-0">
                  {chatHistory.length === 0 && (
-                   <div className="mt-32 flex flex-col items-center opacity-10">
-                     <MessageSquare className="w-16 h-16 mb-6" />
-                     <p className="text-center text-[11px] uppercase font-bold tracking-[0.5em]">System Ready</p>
+                   <div className="mt-12 md:mt-32 flex flex-col items-center opacity-10">
+                     <MessageSquare className="w-10 h-10 md:w-16 md:h-16 mb-4 md:mb-6" />
+                     <p className="text-center text-[9px] md:text-[11px] uppercase font-bold tracking-[0.4em]">Ready</p>
                    </div>
                  )}
                  {chatHistory.map((chat, idx) => (
                    <div key={idx} className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                     <div className={`max-w-[90%] p-6 rounded-[2rem] text-[13px] font-medium shadow-2xl ${chat.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-300 border border-slate-800'}`}>{chat.text}</div>
+                     <div className={`max-w-[85%] p-4 md:p-6 rounded-[1.2rem] md:rounded-[2rem] text-xs md:text-[13px] font-medium shadow-2xl ${chat.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-300 border border-slate-800'}`}>{chat.text}</div>
                    </div>
                  ))}
                </div>
-               <div className="p-6 bg-slate-900 border-t border-slate-800 flex gap-4 safe-bottom">
-                 <input type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onQuestionAsk()} placeholder="Query AI node..." className="flex-1 bg-black border border-slate-800 rounded-2xl px-6 py-5 text-sm outline-none focus:border-blue-600 transition-colors shadow-inner" />
-                 <button onClick={onQuestionAsk} disabled={!chatMessage.trim() || isAsking} className="p-5 bg-blue-600 rounded-2xl disabled:opacity-30 active:scale-95 shadow-2xl transition-transform"><Send className="w-6 h-6" /></button>
+               <div className="p-4 md:p-6 bg-slate-900 border-t border-slate-800 flex gap-3 safe-bottom">
+                 <input type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onQuestionAsk()} placeholder="Query..." className="flex-1 bg-black border border-slate-800 rounded-xl px-4 py-3 md:px-6 md:py-5 text-xs md:text-sm outline-none focus:border-blue-600 transition-colors" />
+                 <button onClick={onQuestionAsk} disabled={!chatMessage.trim() || isAsking} className="p-4 md:p-5 bg-blue-600 rounded-xl disabled:opacity-30 active:scale-95 shadow-2xl"><Send className="w-5 h-5 md:w-6 md:h-6" /></button>
                </div>
             </div>
           </div>
         )}
       </div>
 
-      <div className={`mt-6 lg:hidden px-8 py-5 rounded-[2.5rem] border flex items-center justify-between transition-all duration-1000 ${status.isCrying ? 'bg-red-600 text-white border-white' : 'bg-slate-900/60 border-slate-800 text-slate-500'}`}>
-        <div className="flex items-center gap-5">
-          <Baby className={`w-6 h-6 ${status.isCrying ? 'animate-bounce text-white' : 'text-blue-500'}`} />
-          <span className="text-[11px] font-bold uppercase tracking-[0.2em]">{status.statusMessage}</span>
+      {/* Hidden baby status on desktop, small footer indicator on mobile if feed is active */}
+      {parentView === 'FEED' && status.isCrying && (
+        <div className="mt-2 lg:hidden bg-red-600 text-white px-4 py-3 rounded-xl flex items-center justify-center gap-3 animate-pulse border border-red-400 shadow-lg shrink-0">
+           <Baby className="w-4 h-4" />
+           <span className="text-[10px] font-bold uppercase tracking-widest">Crying Detected</span>
         </div>
-        <div className="text-[10px] font-bold font-mono tracking-tighter bg-black/20 px-3 py-1.5 rounded-lg">{status.noiseLevel}% MONITOR</div>
-      </div>
+      )}
     </div>
   );
 };
